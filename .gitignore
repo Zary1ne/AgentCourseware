@@ -1,0 +1,27 @@
+# 敏感文件
+.env
+
+# Python 缓存
+__pycache__/
+*.pyc
+*.pyo
+
+# 运行时生成的目录
+uploads/
+outputs/
+vector_store/
+
+# 前端依赖
+node_modules/
+frontend/node_modules/
+
+# 知识库
+knowledge_base/
+
+# 日志和统计
+*.log
+stats.json
+
+# 系统文件
+.DS_Store
+Thumbs.db
