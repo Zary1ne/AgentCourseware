@@ -74,7 +74,8 @@
           <span class="panel-head__tag">{{ typeName }} · {{ templateName }}</span>
         </div>
 
-        <div class="preview-layout">
+        <!-- PPT/动画/思维导图 预览布局 -->
+        <div v-if="type !== 'Word'" class="preview-layout">
           <!-- 缩略图侧边栏 -->
           <aside class="thumb-list">
             <button
@@ -138,6 +139,68 @@
               <button class="danger-btn" @click="deleteSlide">删除页</button>
             </div>
             <p class="edit-status">{{ editStatus }}</p>
+          </aside>
+        </div>
+
+        <!-- Word 文档预览布局（独立） -->
+        <div v-else class="preview-layout preview-layout--word">
+          <!-- Word 文档展示区 -->
+          <article class="word-area">
+            <div class="slide-toolbar">
+              <span class="word-doc-label">Word 文档预览</span>
+              <button class="plain-btn" @click="zoom = Math.max(0.7, zoom - 0.1)">缩小</button>
+              <span class="slide-toolbar__info">{{ Math.round(zoom * 100) }}%</span>
+              <button class="plain-btn" @click="zoom = Math.min(1.3, zoom + 0.1)">放大</button>
+            </div>
+
+            <div class="word-frame">
+              <div class="word-doc-card" :style="{ transform: 'scale(' + zoom + ')' }">
+                <div v-for="(slide, i) in slides" :key="i">
+                  <!-- 封面 -->
+                  <template v-if="slide.kind === 'cover'">
+                    <h2 class="word-doc-cover-title">{{ slide.title }}</h2>
+                    <p v-for="(line, j) in slide.body.split('\n').filter(Boolean)" :key="'c'+j" class="word-doc-subtitle">{{ line }}</p>
+                    <hr class="word-doc-divider">
+                  </template>
+                  <!-- 目录 -->
+                  <template v-else-if="slide.kind === 'catalog'">
+                    <h3 class="word-doc-heading">{{ slide.title }}</h3>
+                    <ol class="word-doc-list">
+                      <li v-for="(line, j) in slide.body.split('\n').filter(Boolean)" :key="'t'+j">{{ line.replace(/^\d+\.\s*/, '') }}</li>
+                    </ol>
+                  </template>
+                  <!-- 正文 -->
+                  <template v-else-if="slide.kind === 'content'">
+                    <h3 class="word-doc-heading">{{ slide.title }}</h3>
+                    <p v-for="(line, j) in slide.body.split('\n').filter(Boolean)" :key="'b'+j" class="word-doc-para">{{ line }}</p>
+                  </template>
+                  <!-- 总结 -->
+                  <template v-else-if="slide.kind === 'summary'">
+                    <h3 class="word-doc-heading">{{ slide.title }}</h3>
+                    <div class="word-doc-summary-box">
+                      <p v-for="(line, j) in slide.body.split('\n').filter(Boolean)" :key="'s'+j" class="word-doc-para word-doc-para--noindent">{{ line }}</p>
+                    </div>
+                  </template>
+                </div>
+              </div>
+            </div>
+          </article>
+
+          <!-- Word 编辑器 -->
+          <aside class="editor">
+            <h3>编辑 Word 文档</h3>
+            <label>
+              <span>文档标题</span>
+              <input v-model="wordDocTitle" type="text" />
+            </label>
+            <label>
+              <span>文档内容（每段以【类型】开头）</span>
+              <textarea v-model="wordDocBody" rows="18" />
+            </label>
+            <div class="editor-actions">
+              <button class="plain-btn" @click="saveWordDoc">保存文档</button>
+            </div>
+            <p class="edit-status">{{ wordEditStatus }}</p>
           </aside>
         </div>
 
@@ -264,6 +327,11 @@ const downloadText = ref('尚未开始下载')
 const downloadLog = ref('确认最终版后，可选择格式导出。')
 let downloadTimer = null
 
+// Word 文档编辑状态
+const wordDocTitle = ref('')
+const wordDocBody = ref('')
+const wordEditStatus = ref('当前内容已载入，可直接修改。')
+
 // ---- 计算属性 ----
 const currentSlide = computed(() => slides.value[current.value] || slides.value[0])
 const currentKindColor = computed(() => PAGE_KIND_LABELS[currentSlide.value.kind]?.color || '#2da44e')
@@ -373,15 +441,61 @@ function runGenerateAnimation() {
 
 function goToPreview() {
   editStatus.value = '当前内容已载入，可直接修改。'
+  wordEditStatus.value = '当前内容已载入，可直接修改。'
+  if (type.value === 'Word') syncWordEditor()
   runGenerateAnimation()
 }
 
 function goToExport() {
-  saveCurrentSlide()
+  if (type.value === 'Word') saveWordDoc()
+  else saveCurrentSlide()
   downloadPercent.value = 0
   downloadText.value = '尚未开始下载'
   downloadLog.value = '最终版已确认，请选择导出格式。'
   step.value = 3
+}
+
+// ---- Word 文档编辑 ----
+function syncWordEditor() {
+  wordDocTitle.value = slides.value[0]?.title || ''
+  wordDocBody.value = slides.value
+    .map(s => `【${PAGE_KIND_LABELS[s.kind]?.name || '正文'}】${s.title}\n${s.body}`)
+    .join('\n\n')
+}
+
+function saveWordDoc() {
+  const body = wordDocBody.value.trim()
+  if (!body) { wordEditStatus.value = '文档内容不能为空。'; return }
+
+  const blocks = body.split('\n\n').filter(Boolean)
+  const newSlides = []
+
+  blocks.forEach((block) => {
+    const lines = block.split('\n')
+    const firstLine = lines[0]
+    const kindMatch = firstLine.match(/^【(.+?)】/)
+
+    let kind = 'content'
+    let slideTitle = firstLine
+
+    if (kindMatch) {
+      const kindLabel = kindMatch[1]
+      for (const [key, val] of Object.entries(PAGE_KIND_LABELS)) {
+        if (val.name === kindLabel) { kind = key; break }
+      }
+      slideTitle = firstLine.replace(/^【.+?】/, '').trim()
+    }
+
+    const slideBody = lines.slice(1).join('\n').trim() || '暂无内容'
+    newSlides.push({ kind, title: slideTitle || '未命名', body: slideBody })
+  })
+
+  if (newSlides.length > 0) {
+    slides.value = newSlides
+    current.value = 0
+  }
+
+  wordEditStatus.value = 'Word 文档已保存。'
 }
 
 // ---- 下载进度动画 ----
@@ -626,6 +740,54 @@ dd { margin:0; font-weight:700; color:var(--text-primary); font-size:13px; }
 .word-doc { text-align:left; }
 .word-title { margin:0 0 16px; padding-bottom:8px; border-bottom:2px solid var(--border-subtle); font-size:24px; color:var(--text-primary); }
 .word-para { margin:0 0 12px; font-size:15px; line-height:1.8; color:var(--text-secondary); text-indent:2em; }
+
+/* ========== Word 独立预览布局 ========== */
+.preview-layout--word { grid-template-columns: minmax(0, 1fr) 320px; }
+.word-area { display:flex; flex-direction:column; }
+.word-doc-label { color:var(--text-primary); font-size:14px; font-weight:600; }
+
+.word-frame {
+  min-height:420px; display:flex; align-items:flex-start; justify-content:center;
+  padding:18px; border:1px dashed var(--border-subtle); border-radius:var(--r-sm);
+  background:var(--glass-sm); overflow:auto;
+}
+
+.word-doc-card {
+  width:min(720px, 100%); min-height:380px; padding:40px 48px;
+  border:1px solid var(--border-subtle); border-radius:var(--r-sm);
+  background:var(--glass-sm); box-shadow:0 12px 32px rgba(0,0,0,0.18);
+  transform-origin:top center; transition:transform 0.18s ease;
+  text-align:left; color:var(--text-primary);
+}
+
+.word-doc-cover-title {
+  margin:0 0 10px; text-align:center; font-size:30px; font-weight:700;
+  padding-bottom:10px; border-bottom:2px solid var(--border-subtle);
+}
+.word-doc-subtitle {
+  margin:0 0 6px; text-align:center; color:var(--text-tertiary);
+  font-size:14px; text-indent:0;
+}
+.word-doc-divider { border:none; border-top:1px solid var(--border-ghost); margin:20px 0; }
+
+.word-doc-heading {
+  margin:20px 0 12px; font-size:22px; font-weight:600;
+  padding-bottom:6px; border-bottom:2px solid var(--border-subtle);
+}
+.word-doc-para {
+  margin:0 0 12px; font-size:15px; line-height:1.9;
+  color:var(--text-secondary); text-indent:2em;
+}
+.word-doc-para--noindent { text-indent:0; }
+
+.word-doc-list {
+  margin:0 0 16px; padding-left:2em; line-height:2;
+  color:var(--text-primary); font-size:15px;
+}
+.word-doc-summary-box {
+  border-left:3px solid var(--border-glow); padding:8px 16px;
+  margin:10px 0; background:rgba(31,111,235,0.04);
+}
 
 /* ========== 动画 ========== */
 @keyframes fadeIn { from{opacity:0;transform:translateY(6px)} to{opacity:1;transform:translateY(0)} }
