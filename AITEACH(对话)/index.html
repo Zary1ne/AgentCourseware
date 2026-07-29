@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI教学助手</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="stars-bg" id="starsBg"></div>
+<div class="app">
+    <main class="panel-center">
+        <div class="chat-header">
+            <div class="chat-title">AI 教学助手</div>
+            <div class="header-actions">
+                <button class="btn-new-chat" id="newChatBtn" title="开始新会话">
+                    <span>&#x27F3;</span> 新会话
+                </button>
+            </div>
+        </div>
+
+        <div class="chat-messages" id="messagesContainer">
+            <!-- 欢迎区域 -->
+            <div class="welcome-section" id="welcomeSection">
+                <div class="welcome-avatar">
+                    <svg viewBox="0 0 48 48">
+                        <ellipse cx="24" cy="24" rx="16" ry="14"/>
+                        <circle cx="24" cy="20" r="6"/>
+                        <circle cx="24" cy="19" r="2"/>
+                        <line x1="24" y1="35" x2="18" y2="45"/>
+                        <line x1="24" y1="35" x2="30" y2="45"/>
+                        <line x1="24" y1="10" x2="24" y2="4"/>
+                        <line x1="20" y1="11" x2="18" y2="5"/>
+                        <line x1="28" y1="11" x2="30" y2="5"/>
+                    </svg>
+                </div>
+                <div class="welcome-title">您好，困困</div>
+                <div class="welcome-subtitle">我是您的全科 AI 教学助手，可以根据学科和学习情况，为您提供智能备课、知识讲解和学习建议。</div>
+
+                <!-- 功能卡片 -->
+                <div class="feature-cards">
+                    <div class="feature-card" data-prompt-type="analysis">
+                        <div class="feature-icon-box icon-purple">📝</div>
+                        <div class="feature-title">教学解析</div>
+                        <div class="feature-desc">分析教学重点难点，提供突破方法和教学策略</div>
+                        <div class="feature-tags">
+                            <span class="feature-tag" data-tag-text="高一数学">高一数学</span>
+                            <span class="feature-tag" data-tag-text="语文教案">语文教案</span>
+                            <span class="feature-tag" data-tag-text="物理课件">物理课件</span>
+                        </div>
+                    </div>
+                    <div class="feature-card" data-prompt-type="explain">
+                        <div class="feature-icon-box icon-blue">💡</div>
+                        <div class="feature-title">知识讲解</div>
+                        <div class="feature-desc">由浅入深讲解知识点原理，帮助理解掌握</div>
+                        <div class="feature-tags">
+                            <span class="feature-tag" data-tag-text="数学解析">数学解析</span>
+                            <span class="feature-tag" data-tag-text="语法分析">语法分析</span>
+                            <span class="feature-tag" data-tag-text="化学原理">化学原理</span>
+                        </div>
+                    </div>
+                    <div class="feature-card" data-prompt-type="suggestions">
+                        <div class="feature-icon-box icon-green">🎯</div>
+                        <div class="feature-title">学习建议</div>
+                        <div class="feature-desc">个性化学习计划，智能答疑解惑，高效提升</div>
+                        <div class="feature-tags">
+                            <span class="feature-tag" data-tag-text="学习计划">学习计划</span>
+                            <span class="feature-tag" data-tag-text="答疑解惑">答疑解惑</span>
+                            <span class="feature-tag" data-tag-text="知识梳理">知识梳理</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="chat-input-area">
+            <div class="input-wrapper">
+                <div class="input-main">
+                    <textarea id="messageInput" placeholder="发消息..." rows="1"></textarea>
+                    <div class="input-actions">
+                        <button class="btn-icon-mic" title="语音输入">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="12" rx="3"/><path d="M5 11a7 7 0 0 0 14 0"/><line x1="12" y1="18" x2="12" y2="22"/></svg>
+                        </button>
+                        <button class="btn-send-circle" id="sendBtn" disabled>
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg>
+                        </button>
+                        <button class="btn-stop-circle" id="stopBtn" style="display:none;">
+                            <svg viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </main>
+</div>
+
+<script src="script.js"></script>
+</body>
+</html>
