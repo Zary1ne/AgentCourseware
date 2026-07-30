@@ -4,7 +4,7 @@
     <div class="workspace__main">
       <div class="workspace__content">
         <KnowledgePanel v-show="currentStep === 0" :activeTask="activeTask" :taskId="activeTask.id" @file-uploaded="onFileUploaded" />
-        <ChatPanel v-show="currentStep === 1" :messages="activeTask.messages" :loading="chatLoading" :intent="activeTask.intent" @send="onSendMessage" @generate="onGenerate" @stop="onStopChat" />
+        <ChatPanel v-show="currentStep === 1" :messages="activeTask.messages" :loading="chatLoading" :intent="activeTask.intent" @send="onSendMessage" @generate="onGenerate" @stop="onStopChat" @new-session="onNewSession" />
         <PreviewPanel v-show="currentStep === 2" :files="activeTask.genFiles" :loading="genLoading" @revise="onRevise" />
       </div>
       <div class="workspace__bar">
@@ -42,40 +42,249 @@ const fileCount = computed(() => Object.keys(activeTask.value.genFiles).length)
 
 function onFileUploaded(result) {
   if (result.knowledge_base?.success) {
-    activeTask.value.messages.push({ role:'assistant', content:'参考资料：**'+result.filename+'**（'+result.knowledge_base.chunks+' 块）' })
+    activeTask.value.messages.push({ role:'assistant', content:'参考资料：**'+result.filename+'**（'+result.knowledge_base.chunks+' 块）', _id: Date.now() + '_file' })
   }
 }
 
 function onStopChat() { if (abortController) { abortController.abort(); abortController = null } chatLoading.value = false }
 
-async function onSendMessage(text) {
-  if (!text.trim() || chatLoading.value) return
-  activeTask.value.messages.push({ role:'user', content:text })
-  chatLoading.value = true; abortController = new AbortController()
-  try {
-    const response = await sendMessage(activeTask.value.messages.map(m=>({role:m.role,content:m.content})), true, abortController.signal)
-    if (!response.ok) throw new Error('请求失败')
-    const assistantMsg = { role:'assistant', content:'' }; activeTask.value.messages.push(assistantMsg)
-    const reader = response.body.getReader(); const decoder = new TextDecoder(); let buffer = ''
-    while (true) {
-      const { done, value } = await reader.read(); if (done) break
-      buffer += decoder.decode(value, { stream:true })
-      const lines = buffer.split('\n'); buffer = lines.pop() || ''
-      for (const line of lines) {
-        if (line.startsWith('data: ')) {
-          const data = line.slice(6); if (data === '[DONE]') continue
-          try { const p = JSON.parse(data); if (typeof p === 'string') assistantMsg.content += p; else activeTask.value.intent = p }
-          catch { assistantMsg.content += data }
+function onNewSession() {
+  if (chatLoading.value) onStopChat()
+  activeTask.value.messages = []
+  activeTask.value.intent = null
+  activeTask.value.genFiles = {}
+  setStep(1)
+}
+
+// 从 AI 回复中剥离 JSON 意图块（支持嵌套 { }）
+function stripIntentJson(text) {
+  if (!text) return text
+  let out = text
+  out = out.replace(/\[INTENT_READY\]/g, '')
+  // 去掉 ```json ... ``` 代码块
+  out = out.replace(/```json[\s\S]*?```/g, '')
+  // 寻找包含 "subject" 或 "topic" 键的顶层 JSON 对象
+  const subjectRe = /"subject"\s*:/
+  const topicRe = /"topic"\s*:/
+  const stack = []
+  let i = 0
+  let found = null
+  while (i < out.length) {
+    const ch = out[i]
+    if (ch === '{') {
+      stack.push(i)
+    } else if (ch === '}') {
+      const start = stack.pop()
+      if (stack.length === 0 && start !== undefined) {
+        const candidate = out.slice(start, i + 1)
+        if (subjectRe.test(candidate) || topicRe.test(candidate)) {
+          try {
+            const parsed = JSON.parse(candidate)
+            if (parsed && (parsed.subject || parsed.topic)) {
+              found = { start, end: i + 1, parsed }
+              break
+            }
+          } catch {}
         }
       }
     }
-    if (assistantMsg.content.includes('[INTENT_READY]')) {
-      assistantMsg.content = assistantMsg.content.replace('[INTENT_READY]','')
-      const m = assistantMsg.content.match(/\{[\s\S]*?"subject"\s*:\s*"[^"]*"[\s\S]*?\}/)
-      if (m) { try { activeTask.value.intent = JSON.parse(m[0]); assistantMsg.content = assistantMsg.content.replace(m[0],'') } catch {} }
+    i++
+  }
+  if (found) {
+    if (found.parsed) activeTask.value.intent = found.parsed
+    out = out.slice(0, found.start) + out.slice(found.end)
+  }
+  return out
+}
+
+// 智能合并：将流式输出中被意外切断的句子合并（行末无标点视为续行），保留合法的段落/列表换行
+function normalizeContent(text) {
+  if (!text) return ''
+  let t = text.replace(/\r\n/g, '\n')
+  // 将字面 \n 转换为真正的换行符
+  t = t.replace(/\\r\\n/g, '\n').replace(/\\n/g, '\n')
+  t = t.replace(/\[DONE\]/g, '').trim()
+  t = stripIntentJson(t)
+  t = t.replace(/\n{3,}/g, '\n\n')
+
+  const lines = t.split('\n')
+  const out = []
+  const isListStart = (s) => /^\s*(?:\d+[\.、)）]|[·•\-—*])/.test(s) || /^\s*[一二三四五六七八九十]+[、)]/.test(s)
+  const isSentenceEnd = (s) => /[。！？!?；;…]$/.test(s.trim())
+  const isStructuralLine = (s) => /^[-*·•\u2014]\s*$/.test(s.trim()) || /^```/.test(s.trim())
+  // 行末冒号 + 紧跟的下一行首字符是小写/中文 → 很可能是列表项的换行续行
+  const isColonEnd = (s) => /[：:]$/.test(s.trim())
+
+  let i = 0
+  while (i < lines.length) {
+    const line = lines[i]
+    const trimmed = line.trim()
+    if (trimmed === '') {
+      out.push('')
+      i++
+      continue
     }
-    assistantMsg.content = assistantMsg.content.trim()
-  } catch (e) { if (e.name !== 'AbortError') activeTask.value.messages.push({ role:'assistant', content:'错误：'+e.message }) }
+
+    const nextLine = i + 1 < lines.length ? lines[i + 1] : null
+    const nextTrim = nextLine ? nextLine.trim() : ''
+
+    // 结构性行 → 保留换行
+    if (isStructuralLine(line)) {
+      out.push(line)
+      i++
+      continue
+    }
+
+    // 列表项开头
+    if (isListStart(line)) {
+      // 列表项 + 以句末标点结束 → 保留
+      if (isSentenceEnd(line)) {
+        out.push(line)
+        i++
+        continue
+      }
+      // 列表项 + 以冒号结尾 + 下一行是列表项 → 保留当前，继续
+      if (isColonEnd(line) && nextLine && isListStart(nextLine)) {
+        out.push(line)
+        i++
+        continue
+      }
+      // 列表项 + 以冒号结尾 + 下一行不是列表项 → 合并（续行）
+      if (isColonEnd(line)) {
+        let merged = trimmed
+        i++
+        while (i < lines.length) {
+          const n = lines[i]
+          const nt = n.trim()
+          if (nt === '' || isListStart(n) || isStructuralLine(n)) break
+          merged += nt
+          i++
+          if (isSentenceEnd(merged)) break
+        }
+        out.push(merged)
+        continue
+      }
+      // 列表项不以句末/冒号结尾 → 合并
+      if (!isSentenceEnd(line)) {
+        let merged = trimmed
+        i++
+        while (i < lines.length) {
+          const n = lines[i]
+          const nt = n.trim()
+          if (nt === '' || isListStart(n) || isStructuralLine(n)) break
+          merged += nt
+          i++
+          if (isSentenceEnd(merged)) break
+        }
+        out.push(merged)
+        continue
+      }
+      out.push(line)
+      i++
+      continue
+    }
+
+    // 非列表项：以句末标点结束 → 保留换行
+    if (isSentenceEnd(line)) {
+      out.push(line)
+      i++
+      continue
+    }
+
+    // 非列表项：合并到句末标点或空行
+    let merged = trimmed
+    i++
+    while (i < lines.length) {
+      const n = lines[i]
+      const nt = n.trim()
+      if (nt === '' || isListStart(n) || isStructuralLine(n)) break
+      merged += nt
+      i++
+      if (isSentenceEnd(merged)) break
+    }
+    out.push(merged)
+  }
+  return out.join('\n').replace(/\n{3,}/g, '\n\n').trim()
+}
+
+async function onSendMessage(text, promptType = '') {
+  if (!text.trim() || chatLoading.value) return
+  activeTask.value.messages.push({ role:'user', content:text, _id: Date.now() + '_user' })
+  chatLoading.value = true; abortController = new AbortController()
+  try {
+    const response = await sendMessage(activeTask.value.messages.map(m=>({role:m.role,content:m.content})), true, abortController.signal, promptType)
+    if (!response.ok) throw new Error('请求失败')
+    const assistantMsg = { role:'assistant', content:'', _id: Date.now() + '_ai' }; activeTask.value.messages.push(assistantMsg)
+    const reader = response.body.getReader(); const decoder = new TextDecoder()
+    let buffer = ''
+    let eventDataLines = []
+    let eventType = 'message'
+
+    let intentReadyFlag = false
+
+    function flushEvent() {
+      if (eventDataLines.length === 0) return
+      const dataStr = eventDataLines.join('\n')
+      eventDataLines = []
+      if (dataStr === '[DONE]' || dataStr === '"[DONE]"') return
+      if (eventType === 'intents') {
+        try { activeTask.value.intent = JSON.parse(dataStr) } catch {}
+        return
+      }
+      // 如果已检测到 [INTENT_READY]，后续不再追加内容
+      if (intentReadyFlag) return
+      // 尝试解析为 JSON（后端以 JSON 字符串方式发送每个块）
+      try {
+        const p = JSON.parse(dataStr)
+        let textChunk = ''
+        if (typeof p === 'string') {
+          if (p === '[DONE]') return
+          textChunk = p
+        } else if (typeof p === 'object' && p !== null) {
+          if (p.subject || p.topic) { activeTask.value.intent = p; return }
+          if (typeof p.content === 'string') textChunk = p.content
+          else return
+        }
+        // 实时清理：移除 [INTENT_READY] 标记及之后的 JSON 意图块
+        if (textChunk.includes('[INTENT_READY]')) {
+          intentReadyFlag = true
+          const idx = textChunk.indexOf('[INTENT_READY]')
+          textChunk = textChunk.slice(0, idx)
+        }
+        if (textChunk) assistantMsg.content += textChunk
+      } catch {
+        let textChunk = dataStr
+        if (textChunk !== '[DONE]') {
+          if (textChunk.includes('[INTENT_READY]')) {
+            intentReadyFlag = true
+            const idx = textChunk.indexOf('[INTENT_READY]')
+            textChunk = textChunk.slice(0, idx)
+          }
+          if (textChunk) assistantMsg.content += textChunk
+        }
+      }
+    }
+
+    while (true) {
+      const { done, value } = await reader.read(); if (done) break
+      buffer += decoder.decode(value, { stream:true })
+      const parts = buffer.split('\n')
+      buffer = parts.pop() || ''
+      for (const line of parts) {
+        if (line === '') {
+          flushEvent()
+        } else if (line.startsWith('event:')) {
+          eventType = line.slice(6).trim()
+        } else if (line.startsWith('data:')) {
+          eventDataLines.push(line.slice(5).trimStart())
+        }
+      }
+    }
+    flushEvent()
+
+    // 最终清理：剥离 JSON 意图块 + 规范排版
+    assistantMsg.content = normalizeContent(assistantMsg.content)
+  } catch (e) { if (e.name !== 'AbortError') activeTask.value.messages.push({ role:'assistant', content:'错误：'+e.message, _id: Date.now() + '_err' }) }
   finally { chatLoading.value = false; abortController = null }
 }
 
@@ -83,20 +292,20 @@ async function onGenerate() {
   if (!activeTask.value.intent) {
     try {
       const res = await extractIntent(activeTask.value.messages.map(m=>({role:m.role,content:m.content})))
-      if (res.data?.intent) { activeTask.value.intent = res.data.intent; activeTask.value.messages.push({ role:'assistant', content:'已从对话中提取教学意图，正在生成课件...' }) }
-    } catch { activeTask.value.messages.push({ role:'assistant', content:'无法提取教学意图，请在对话中更详细地描述教学需求后再试。' }); return }
+      if (res.data?.intent) { activeTask.value.intent = res.data.intent; activeTask.value.messages.push({ role:'assistant', content:'已从对话中提取教学意图，正在生成课件...', _id: Date.now() + '_intent' }) }
+    } catch { activeTask.value.messages.push({ role:'assistant', content:'无法提取教学意图，请在对话中更详细地描述教学需求后再试。', _id: Date.now() + '_intent_err' }); return }
   }
   genLoading.value = true
   try {
     const res = await generateAll(activeTask.value.intent)
     activeTask.value.genFiles = res.data.files || {}
-    activeTask.value.messages.push({ role:'assistant', content:'课件已生成。正在跳转到预览页...' })
+    activeTask.value.messages.push({ role:'assistant', content:'课件已生成。正在跳转到预览页...', _id: Date.now() + '_gen' })
     setStep(2)
-  } catch (e) { activeTask.value.messages.push({ role:'assistant', content:'生成失败：'+(e.response?.data?.detail||e.message) }) }
+  } catch (e) { activeTask.value.messages.push({ role:'assistant', content:'生成失败：'+(e.response?.data?.detail||e.message), _id: Date.now() + '_gen_err' }) }
   finally { genLoading.value = false }
 }
 
-function onRevise(instruction) { activeTask.value.messages.push({ role:'user', content:instruction }); onSendMessage(instruction) }
+function onRevise(instruction) { activeTask.value.messages.push({ role:'user', content:instruction, _id: Date.now() + '_user' }); onSendMessage(instruction) }
 </script>
 
 <style scoped>

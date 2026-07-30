@@ -1,7 +1,10 @@
+import asyncio
 import json
 import uuid
 import re
 import io
+import time
+from urllib.parse import quote
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse, Response
 from sse_starlette.sse import EventSourceResponse
@@ -173,27 +176,33 @@ async def send_message(request: ChatRequest):
 
     if request.stream:
         async def event_generator():
-            # 1. 先本地识别意图并推送（来自 AITEACH(对话) 原型）
             user_msgs = [m for m in history if m["role"] == "user"]
             last_user_text = user_msgs[-1]["content"] if user_msgs else ""
             keyword_intents = recognize_intent(last_user_text)
             if keyword_intents:
                 yield {"event": "intents", "data": json.dumps(keyword_intents, ensure_ascii=False)}
 
-            # 2. 流式生成教学方案内容（含降级）
             full_response = ""
-            try:
-                async for chunk in chat_stream(history):
-                    full_response += chunk
-                    yield {"event": "message", "data": chunk}
-            except Exception:
-                # 最终兜底：硬编码回复
-                fallback = generate_ai_response(last_user_text, keyword_intents)
-                for ch in clean_response(fallback):
-                    full_response += ch
-                    yield {"event": "message", "data": ch}
+            buffer = ""
+            flush_interval = 0.05
+            last_flush = time.monotonic()
 
-            # 3. 检测是否需要提取结构化意图（[INTENT_READY] 标记）
+            try:
+                async for chunk in chat_stream(history, request.prompt_type):
+                    full_response += chunk
+                    buffer += chunk
+                    now = time.monotonic()
+                    if now - last_flush >= flush_interval or len(buffer) >= 50:
+                        yield {"event": "message", "data": buffer}
+                        buffer = ""
+                        last_flush = now
+                if buffer:
+                    yield {"event": "message", "data": buffer}
+            except Exception:
+                fallback = generate_ai_response(last_user_text, keyword_intents)
+                full_response = clean_response(fallback)
+                yield {"event": "message", "data": full_response}
+
             if "[INTENT_READY]" in full_response:
                 try:
                     intent = extract_intent(history + [{"role": "assistant", "content": full_response}])
@@ -208,7 +217,7 @@ async def send_message(request: ChatRequest):
     else:
         # 非流式响应
         try:
-            response_text = chat_sync(history)
+            response_text = chat_sync(history, request.prompt_type)
 
             # 尝试提取意图
             intent = None
@@ -307,10 +316,11 @@ async def export_docx(request: Request):
     try:
         buf = build_docx(title, content)
         safe = re.sub(r'[\\/*?:"<>|]', '_', title)
+        quoted = quote(safe, safe='')
         return Response(
             buf.getvalue(),
             media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-            headers={"Content-Disposition": f'attachment; filename="{safe}.docx"'}
+            headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quoted}.docx"}
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -337,10 +347,11 @@ async def export_pptx(request: Request):
         slides = parse_content_to_slides(content)
         pptx_bytes = create_pptx(title, slides)
         safe = re.sub(r'[\\/*?:"<>|]', '_', title)
+        quoted = quote(safe, safe='')
         return Response(
             pptx_bytes,
             media_type="application/vnd.openxmlformats-officedocument.presentationml.presentation",
-            headers={"Content-Disposition": f'attachment; filename="{safe}.pptx"'}
+            headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quoted}.pptx"}
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

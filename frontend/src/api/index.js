@@ -2,17 +2,25 @@ import axios from 'axios'
 
 const api = axios.create({ baseURL: '/api', timeout: 120000 })
 
-export function sendMessage(messages, stream = true, signal = null) {
+export function sendMessage(messages, stream = true, signal = null, promptType = '') {
+  const body = { messages, stream }
+  if (promptType) body.prompt_type = promptType
   if (stream) {
     return fetch('/api/chat/message', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ messages, stream: true }), signal,
+      body: JSON.stringify(body), signal,
     })
   }
-  return api.post('/chat/message', { messages, stream: false })
+  return api.post('/chat/message', body)
 }
 
 export function extractIntent(messages) { return api.post('/chat/extract-intent', { messages }) }
+
+// 直接把对话内容导出为 docx / pptx 下载（来自 AITEACH 原型 /api/chat/export/{format}）
+export async function exportDocument(format, content, title = '教学文档') {
+  const resp = await api.post(`/chat/export/${format}`, { content, title }, { responseType: 'blob' })
+  return resp.data
+}
 
 export function uploadToKnowledgeBase(file, taskId = 'default') {
   const fd = new FormData(); fd.append('file', file); fd.append('task_id', taskId)

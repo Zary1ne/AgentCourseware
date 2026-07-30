@@ -9,11 +9,16 @@
     <div class="task-sidebar__list">
       <div v-for="t in tasks" :key="t.id" :class="['task-item', { 'task-item--active': t.id === activeTaskId }]" @click="switchTask(t.id)">
         <svg width="16" height="16" viewBox="0 0 16 16" fill="none" class="task-item__icon"><rect x="1" y="1" width="14" height="14" rx="3" stroke="currentColor" stroke-width="1.1"/><path d="M5 7h6M5 10h4" stroke="currentColor" stroke-width="0.7" stroke-linecap="round"/></svg>
-        <input v-if="editingId === t.id" class="task-item__input" v-model="editName" @blur="confirmRename(t.id)" @keydown.enter="confirmRename(t.id)" @keydown.escape="editingId = null" @click.stop autofocus />
+        <input v-if="editingId === t.id" class="task-item__input" v-model="editName" @blur="confirmRename(t.id)" @keydown.enter="confirmRename(t.id)" @keydown.escape="cancelRename" @click.stop autofocus />
         <span v-else class="task-item__name" @dblclick="startRename(t)">{{ t.name }}</span>
-        <button class="task-item__delete" @click.stop="deleteTask(t.id)" title="删除">
-          <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M9 3L3 9M3 3l6 6" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg>
-        </button>
+        <div class="task-item__actions">
+          <button v-if="editingId !== t.id" class="task-item__rename" @click.stop="startRename(t)" title="重命名">
+            <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M8.5 1.5l2 2-6 6-2.5.5.5-2.5 6-6z" stroke="currentColor" stroke-width="1" stroke-linejoin="round"/><line x1="7.5" y1="2.5" x2="9.5" y2="4.5" stroke="currentColor" stroke-width="1"/></svg>
+          </button>
+          <button class="task-item__delete" @click.stop="deleteTask(t.id)" title="删除">
+            <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M9 3L3 9M3 3l6 6" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg>
+          </button>
+        </div>
       </div>
     </div>
   </aside>
@@ -26,6 +31,7 @@ const { tasks, activeTaskId, switchTask, createTask, deleteTask, renameTask } = 
 const editingId = ref(null)
 const editName = ref('')
 function startRename(t) { editingId.value = t.id; editName.value = t.name }
+function cancelRename() { editingId.value = null; editName.value = '' }
 function confirmRename(id) { if (editName.value.trim()) renameTask(id, editName.value.trim()); editingId.value = null; editName.value = '' }
 </script>
 
@@ -42,8 +48,11 @@ function confirmRename(id) { if (editName.value.trim()) renameTask(id, editName.
 .task-item__icon { flex-shrink:0; opacity:0.4; }
 .task-item--active .task-item__icon { opacity:0.8; }
 .task-item__name { flex:1; min-width:0; font-size:13px; font-weight:500; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.task-item__actions { display:flex; align-items:center; gap:2px; opacity:0; transition:opacity var(--t-fast) var(--ease-out); }
+.task-item:hover .task-item__actions, .task-item--active .task-item__actions { opacity:1; }
+.task-item__rename { display:flex; align-items:center; justify-content:center; width:22px; height:22px; border-radius:var(--r-xs); background:transparent; border:none; color:var(--text-tertiary); cursor:pointer; transition:all var(--t-fast) var(--ease-out); flex-shrink:0; }
+.task-item__rename:hover { background:var(--accent-glow); color:var(--accent)!important; }
 .task-item__input { flex:1; min-width:0; font-size:13px; font-weight:500; padding:2px 0; background:transparent; border:none; border-bottom:1px solid var(--accent); color:var(--text-primary); outline:none; font-family:inherit; }
-.task-item__delete { display:flex; align-items:center; justify-content:center; width:22px; height:22px; border-radius:var(--r-xs); background:transparent; border:none; color:transparent; cursor:pointer; transition:all var(--t-fast) var(--ease-out); flex-shrink:0; }
-.task-item:hover .task-item__delete { color:var(--text-tertiary); }
+.task-item__delete { display:flex; align-items:center; justify-content:center; width:22px; height:22px; border-radius:var(--r-xs); background:transparent; border:none; color:var(--text-tertiary); cursor:pointer; transition:all var(--t-fast) var(--ease-out); flex-shrink:0; }
 .task-item__delete:hover { background:rgba(240,112,112,0.12); color:var(--error)!important; }
 </style>
