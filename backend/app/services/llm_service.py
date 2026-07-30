@@ -20,12 +20,26 @@ SYSTEM_PROMPT = """你是一个专业的教学智能体助手，帮助教师完�
 对话策略：
 - 如果教师的需求模糊（如只说"帮我做个物理课件"），你要主动询问：年级/学段、具体知识点、课时长度、学生已有知识基础和学习水平、教学风格偏好等。
 - 特别关注学情信息：学生所在年级、整体学习水平（基础薄弱/中等/优秀）、已掌握的前置知识、学习风格偏好（视觉型/动手型/听觉型等）、是否有特殊需求（如需要更多基础铺垫或延伸拓展）。
-- 每次提问控制在2-3个关键问题，不要一次性问太多。
-- 当信息足够完整时，主动总结确认："根据您的需求，我理解为：...，是否准确？"
+- 每次提问控制在1-2个关键问题，不要一次性问太多。
 
-输出格式要求：
+交互输出格式（非提问阶段）：
+- 当你向教师提问时，必须使用以下结构化标记格式，让教师可以直接点击或输入：
+
+1. **选择题**（提供可选选项，教师点击即可）：
+   格式：请选择XX？{{CHOICE:选项A|选项B|选项C}}
+   示例：请选择年级？{{CHOICE:高一|高二|高三}}
+
+2. **数字输入题**（需要教师输入数字的场景）：
+   格式：请输入XX？{{INPUT:请输入数字|默认值}}
+   示例：请输入课时长度（分钟）？{{INPUT:请输入分钟数|45}}
+
+- 除了以上结构化标记外，其他内容用自然语言描述，不要使用任何特殊标记或JSON。
+- 每次提问只使用1-2个结构化标记，其余用自然语言引导。
+- 标记的选项要精炼准确，不要超过4个选项。
+
+最终意图输出：
 - 当需求确认完毕后，在回复末尾添加 [INTENT_READY] 标记
-- 然后输出结构化的教学意图JSON：
+- 然后输出结构化的教学意图JSON（仅在最终确认时输出，平时不要输出JSON）：
 ```json
 {
   "subject": "学科",
@@ -84,6 +98,90 @@ TEACHING_PLAN_PROMPT = '''你是 AI 教学设计专家。请根据教师的需�
 5. 始终用中文回复'''
 
 
+# ===== 专用 Prompt（来自 AITEACH(对话) app.py 原型） =====
+ANALYSIS_PROMPT = """你是资深教学解析专家。当用户请求教学解析时，请按以下结构回答：
+
+1. 【教学定位】这个知识点在课程体系中的位置和作用
+2. 【重点分析】必须掌握的核心内容和关键概念
+3. 【难点突破】学生容易卡住的地方，以及突破方法
+4. 【教学建议】教学顺序、教学方法建议
+5. 【常见误区】学生常犯的错误和纠正方法
+6. 【拓展延伸】相关知识点关联和拓展方向
+
+要求：
+- 结合具体学科特点
+- 语言通俗易懂
+- 禁止使用 * 字符做格式标记"""
+
+SUGGESTIONS_PROMPT = """你是个性化学习顾问。当用户请求学习建议时，请按以下结构回答：
+
+1. 【学习诊断】分析学生的学习现状和可能的薄弱点
+2. 【学习目标】制定明确、可衡量的学习目标
+3. 【学习计划】分阶段的学习计划（周计划/月计划）
+4. 【学习方法】适合该学科的高效学习方法和技巧
+5. 【练习推荐】针对性的练习题和学习资源
+6. 【进度追踪】如何检验学习效果、调整计划
+
+要求：
+- 方案具体可行
+- 方法科学有效
+- 禁止使用 * 字符做格式标记"""
+
+EXPLAIN_PROMPT = """你是知识讲解专家。当用户请求知识讲解时，请按以下结构回答：
+
+1. 【概念定义】用最简洁的语言定义这个知识点
+2. 【通俗解释】用生活中的例子或比喻来解释
+3. 【原理分析】深入讲解背后的原理和逻辑
+4. 【示例演示】给出典型的例题或应用场景
+5. 【注意事项】使用时的注意点和常见陷阱
+6. 【举一反三】相关知识点的关联和延伸
+
+要求：
+- 由浅入深，循序渐进
+- 多用直观的例子
+- 禁止使用 * 字符做格式标记"""
+
+ENGLISH_PROMPT = """你是高中英语专家，专注于高一英语教学。请根据高一英语教学大纲，提供以下内容：
+
+1. 【词汇学习】重点词汇、短语辨析、用法举例
+2. 【语法讲解】高一核心语法点（时态、从句、非谓语动词等）
+3. 【阅读理解】阅读技巧、常见题型分析
+4. 【写作指导】写作框架、常用句型、范文赏析
+5. 【听力训练】听力技巧、常见场景词汇
+6. 【口语表达】日常交际用语、情景对话
+
+要求：
+- 内容贴合高一水平
+- 例句实用地道
+- 中英双语解释
+- 禁止使用 * 字符做格式标记"""
+
+
+# ===== Prompt 路由表（来自 AITEACH(对话) app.py PROMPT_MAP 原型） =====
+PROMPT_MAP = {
+    "general": SYSTEM_PROMPT,
+    "teaching": TEACHING_PLAN_PROMPT,
+    "analysis": ANALYSIS_PROMPT,
+    "suggestions": SUGGESTIONS_PROMPT,
+    "explain": EXPLAIN_PROMPT,
+    "english": ENGLISH_PROMPT,
+}
+
+
+def select_system_prompt(history: List[Dict], prompt_type: str = "") -> str:
+    """根据 prompt_type 或关键词选择系统提示词。
+
+    优先级：显式 prompt_type > 关键词检测（is_teaching_request）> 默认 SYSTEM_PROMPT。
+    """
+    if prompt_type and prompt_type in PROMPT_MAP:
+        return PROMPT_MAP[prompt_type]
+    user_msgs = [m for m in history if m["role"] == "user"]
+    last_user_text = user_msgs[-1]["content"] if user_msgs else ""
+    if is_teaching_request(last_user_text):
+        return TEACHING_PLAN_PROMPT
+    return SYSTEM_PROMPT
+
+
 # ===== 工具函数（来自 AITEACH(对话) 原型） =====
 def clean_response(text: str) -> str:
     """移除星号格式标记"""
@@ -117,14 +215,13 @@ def build_messages(history: List[Dict], system_prompt: str = SYSTEM_PROMPT) -> L
     return [{"role": "system", "content": system_prompt}] + history
 
 
-async def chat_stream(history: List[Dict]) -> AsyncGenerator[str, None]:
-    """流式聊天（含教学方案检测 + 三层降级）"""
+async def chat_stream(history: List[Dict], prompt_type: str = "") -> AsyncGenerator[str, None]:
+    """流式聊天（含 prompt_type 路由 + 三层降级）"""
     # 检测最后一条用户消息是否为教学方案请求
     user_msgs = [m for m in history if m["role"] == "user"]
     last_user_text = user_msgs[-1]["content"] if user_msgs else ""
-    use_teaching_prompt = is_teaching_request(last_user_text)
 
-    system_prompt = TEACHING_PLAN_PROMPT if use_teaching_prompt else SYSTEM_PROMPT
+    system_prompt = select_system_prompt(history, prompt_type)
     messages = build_messages(history, system_prompt)
 
     # 第一层：直接调用 OpenAI
@@ -143,7 +240,7 @@ async def chat_stream(history: List[Dict]) -> AsyncGenerator[str, None]:
     except Exception as e:
         pass  # 降级到下一层
 
-    # 第二层：重试一次（不带 stream）
+    # 第二层：重试一次（不带 stream，但分块输出模拟流式）
     try:
         response = client.chat.completions.create(
             model=LLM_MODEL,
@@ -152,27 +249,28 @@ async def chat_stream(history: List[Dict]) -> AsyncGenerator[str, None]:
             max_tokens=4096,
         )
         content = response.choices[0].message.content
-        for ch in clean_response(content):
-            yield ch
-            await asyncio.sleep(0.015)
+        cleaned = clean_response(content)
+        # 按字符分块输出，模拟流式效果
+        chunk_size = 2
+        for i in range(0, len(cleaned), chunk_size):
+            yield cleaned[i:i+chunk_size]
         return
     except Exception as e:
-        pass  # 降级到最后层
+        pass  # 降级到下一层
 
-    # 第三层：硬编码兜底
+    # 第三层：硬编码兜底，分块输出
     fallback = clean_response(fallback_response(last_user_text))
-    for ch in fallback:
-        yield ch
-        await asyncio.sleep(0.015)
+    chunk_size = 2
+    for i in range(0, len(fallback), chunk_size):
+        yield fallback[i:i+chunk_size]
 
 
-def chat_sync(history: List[Dict]) -> str:
-    """同步聊天（含教学方案检测 + 降级）"""
+def chat_sync(history: List[Dict], prompt_type: str = "") -> str:
+    """同步聊天（含 prompt_type 路由 + 降级）"""
     user_msgs = [m for m in history if m["role"] == "user"]
     last_user_text = user_msgs[-1]["content"] if user_msgs else ""
-    use_teaching_prompt = is_teaching_request(last_user_text)
 
-    system_prompt = TEACHING_PLAN_PROMPT if use_teaching_prompt else SYSTEM_PROMPT
+    system_prompt = select_system_prompt(history, prompt_type)
     messages = build_messages(history, system_prompt)
 
     try:

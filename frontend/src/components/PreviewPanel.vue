@@ -236,7 +236,7 @@
             <div class="export-buttons-row">
               <button class="export-btn" @click="startDownload('pptx')">下载 .pptx</button>
               <button class="export-btn" @click="startDownload('docx')">下载 .docx</button>
-              <button class="export-btn" @click="startDownload('pdf')">下载 .pdf</button>
+              <button class="export-btn export-btn-disabled" @click="downloadLog = 'PDF 导出即将上线，敬请期待。'" title="即将上线">下载 .pdf</button>
             </div>
 
             <div class="download-progress">
@@ -264,7 +264,7 @@
 
 <script setup>
 import { ref, computed, watch, onUnmounted } from 'vue'
-import { getDownloadUrl } from '../api'
+import { getDownloadUrl, exportDocument } from '../api'
 
 const props = defineProps({
   files: { type: Object, default: () => ({}) },
@@ -498,27 +498,49 @@ function saveWordDoc() {
   wordEditStatus.value = 'Word 文档已保存。'
 }
 
-// ---- 下载进度动画 ----
-function startDownload(format) {
+// ---- 下载进度动画（真实后端导出） ----
+async function startDownload(format) {
   clearInterval(downloadTimer)
   const fileName = `${slides.value[0]?.title || '课件'}.${format}`
   downloadPercent.value = 0
   downloadText.value = '正在准备文件'
   downloadLog.value = `正在生成 ${fileName}，请稍候。`
-  let v = 0
-  downloadTimer = setInterval(() => {
-    v += Math.ceil(Math.random() * 10)
-    if (v > 100) v = 100
-    downloadPercent.value = v
-    if (v < 35) downloadText.value = '正在整理最终版内容'
-    else if (v < 70) downloadText.value = '正在生成导出文件'
-    else if (v < 100) downloadText.value = '正在写入下载数据'
-    if (v >= 100) {
-      clearInterval(downloadTimer)
-      downloadText.value = '下载完成'
-      downloadLog.value = `已完成：${fileName}。前端演示版已模拟下载进度，请通过后端接口获取真实文件。`
-    }
-  }, 230)
+
+  // 构建课件内容
+  let content = ''
+  slides.value.forEach((s, i) => {
+    const kindLabel = PAGE_KIND_LABELS[s.kind]?.name || '正文'
+    content += `【${kindLabel}】${s.title}\n${s.body}\n\n`
+  })
+  const title = slides.value[0]?.title || '教学课件'
+
+  try {
+    downloadPercent.value = 20
+    downloadText.value = '正在生成文件'
+    downloadLog.value = `正在调用后端导出接口生成 ${fileName}...`
+
+    const blob = await exportDocument(format, content, title)
+
+    downloadPercent.value = 80
+    downloadText.value = '即将完成'
+
+    // 触发浏览器下载
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = fileName
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    URL.revokeObjectURL(url)
+
+    downloadPercent.value = 100
+    downloadText.value = '下载完成'
+    downloadLog.value = `✅ 已成功下载 ${fileName}`
+  } catch (e) {
+    downloadText.value = '下载失败'
+    downloadLog.value = `❌ 下载失败：${e.response?.data?.detail || e.message}`
+  }
 }
 
 // ---- 监听 loading 变化（来自父组件） ----

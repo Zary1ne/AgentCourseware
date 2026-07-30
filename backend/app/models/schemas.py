@@ -12,6 +12,7 @@ class ChatMessage(BaseModel):
 class ChatRequest(BaseModel):
     messages: List[ChatMessage]
     stream: bool = True
+    prompt_type: Optional[str] = ""  # 专用 Prompt 类型：analysis/suggestions/explain/english/teaching/general
 
 
 class ChatResponse(BaseModel):
