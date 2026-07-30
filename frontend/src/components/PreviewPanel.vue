@@ -38,6 +38,7 @@
                 :class="['option-card', { active: type === opt.value }]"
                 @click="type = opt.value; typeName = opt.label"
               >
+                <span class="option-emoji">{{ opt.emoji }}</span>
                 <strong>{{ opt.label }}</strong>
                 <span>{{ opt.desc }}</span>
               </button>
@@ -52,6 +53,7 @@
                 :class="['option-card', { active: template === tpl.value }]"
                 @click="template = tpl.value; templateName = tpl.label"
               >
+                <span class="option-emoji">{{ tpl.emoji }}</span>
                 <strong>{{ tpl.label }}</strong>
                 <span>{{ tpl.desc }}</span>
               </button>
@@ -293,15 +295,15 @@ const initialSlides = [
 // ---- 选项配置 ----
 const stepItems = ['选择类型与模板', '实时预览与编辑', '导出下载']
 const typeOptions = [
-  { value: 'PPT', label: 'PPT', desc: '适合课堂演示，展示封面、目录、正文和总结页。' },
-  { value: 'Word', label: 'Word', desc: '适合打印讲义，按教学目标和教学过程形成文档。' },
-  { value: '动画', label: '动画', desc: '适合演示实验步骤，生成分镜和过程说明。' },
-  { value: '思维导图', label: '思维导图', desc: '适合梳理知识结构，突出概念关系和重点。' },
+  { value: 'PPT', label: 'PPT', emoji: '📊', desc: '适合课堂演示，展示封面、目录、正文和总结页。' },
+  { value: 'Word', label: 'Word', emoji: '📄', desc: '适合打印讲义，按教学目标和教学过程形成文档。' },
+  { value: '动画', label: '动画', emoji: '🎬', desc: '适合演示实验步骤，生成分镜和过程说明。' },
+  { value: '思维导图', label: '思维导图', emoji: '🧠', desc: '适合梳理知识结构，突出概念关系和重点。' },
 ]
 const templateOptions = [
-  { value: 'academic', label: '学术严谨风', desc: '黑白边框、层次清晰，适合理科课程和正式展示。' },
-  { value: 'lively', label: '活泼互动风', desc: '高对比块面，适合课堂活动、实验和互动环节。' },
-  { value: 'minimal', label: '极简商务风', desc: '留白更足，信息克制，适合答辩或汇报型课件。' },
+  { value: 'academic', label: '学术严谨风', emoji: '🎓', desc: '黑白边框、层次清晰，适合理科课程和正式展示。' },
+  { value: 'lively', label: '活泼互动风', emoji: '🎨', desc: '高对比块面，适合课堂活动、实验和互动环节。' },
+  { value: 'minimal', label: '极简商务风', emoji: '✨', desc: '留白更足，信息克制，适合答辩或汇报型课件。' },
 ]
 
 // ---- 状态 ----
@@ -598,8 +600,16 @@ onUnmounted(() => {
 }
 .option-card strong { display:block; margin-bottom:8px; font-size:18px; color:var(--text-primary); }
 .option-card span { font-size:13px; line-height:1.6; }
+.option-emoji { display:block; font-size:28px; margin-bottom:6px; line-height:1; }
 .option-card.active,
 .option-card:hover { background:var(--glass-lg); border-color:var(--border-glow); transform:translateY(-2px); }
+.option-card.active { position:relative; }
+.option-card.active::after {
+  content:'✓'; position:absolute; top:8px; right:10px;
+  width:22px; height:22px; border-radius:50%;
+  background:var(--border-glow); color:#fff; font-size:12px; font-weight:700;
+  display:flex; align-items:center; justify-content:center;
+}
 
 /* ========== 按钮 ========== */
 .actions { display:flex; justify-content:flex-end; gap:10px; margin-top:18px; }
