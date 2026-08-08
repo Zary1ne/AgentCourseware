@@ -13,9 +13,8 @@
       <div v-if="showOverlay" class="generate-overlay">
         <div class="generate-card">
           <div class="generate-spinner" />
-          <div class="generate-percent">{{ genPercent }}%</div>
           <p class="generate-text">{{ genText }}</p>
-          <div class="generate-track"><div class="generate-bar" :style="{ width: genPercent + '%' }" /></div>
+          <div class="generate-track"><div class="generate-bar generate-bar-indeterminate" /></div>
         </div>
       </div>
 
@@ -62,7 +61,7 @@
         </div>
 
         <div class="actions">
-          <button class="primary-btn" @click="goToPreview">下一步：实时预览与在线编辑</button>
+          <button class="primary-btn" @click="goToPreview">🚀 下一步：实时预览与在线编辑</button>
         </div>
       </div>
 
@@ -82,8 +81,14 @@
           <aside class="thumb-list">
             <button
               v-for="(item, index) in slides" :key="index"
-              :class="['thumb', { active: index === current }]"
+              :class="['thumb', { active: index === current, 'thumb-drag-over': index === dragOverIndex }]"
+              draggable="true"
               @click="current = index"
+              @dragstart="onDragStart(index, $event)"
+              @dragover.prevent="onDragOver(index, $event)"
+              @dragleave="onDragLeave(index)"
+              @drop.prevent="onDrop(index)"
+              @dragend="onDragEnd"
             >
               <span class="thumb-top">
                 <span class="thumb-kind" :style="{ background: PAGE_KIND_LABELS[item.kind]?.color || '#2da44e' }">
@@ -98,12 +103,12 @@
           <!-- 幻灯片区域 -->
           <article class="slide-area">
             <div class="slide-toolbar">
-              <button class="plain-btn" @click="current = Math.max(0, current - 1)" :disabled="current <= 0">上一页</button>
+              <button class="plain-btn" @click="current = Math.max(0, current - 1)" :disabled="current <= 0">⬅️ 上一页</button>
               <span class="slide-toolbar__info">第 {{ current + 1 }} 页 / 共 {{ slides.length }} 页</span>
-              <button class="plain-btn" @click="current = Math.min(slides.length - 1, current + 1)" :disabled="current >= slides.length - 1">下一页</button>
-              <button class="plain-btn" @click="zoom = Math.max(0.7, zoom - 0.1)">缩小</button>
+              <button class="plain-btn" @click="current = Math.min(slides.length - 1, current + 1)" :disabled="current >= slides.length - 1">➡️ 下一页</button>
+              <button class="plain-btn" @click="zoom = Math.max(0.7, zoom - 0.1)">🔍 缩小</button>
               <span class="slide-toolbar__info">{{ Math.round(zoom * 100) }}%</span>
-              <button class="plain-btn" @click="zoom = Math.min(1.3, zoom + 0.1)">放大</button>
+              <button class="plain-btn" @click="zoom = Math.min(1.3, zoom + 0.1)">🔍 放大</button>
             </div>
 
             <div class="slide-frame">
@@ -118,27 +123,30 @@
 
           <!-- 编辑器 -->
           <aside class="editor">
-            <h3>编辑当前页</h3>
+            <h3>📝 编辑当前页</h3>
             <label>
               <span>页面类型</span>
-              <select v-model="currentSlide.kind">
+              <select v-model="draft.kind">
                 <option v-for="(info, key) in PAGE_KIND_LABELS" :key="key" :value="key">{{ info.name }}</option>
               </select>
             </label>
             <label>
               <span>页面标题</span>
-              <input v-model="currentSlide.title" type="text" />
+              <input v-model="draft.title" type="text" placeholder="输入页面标题" />
             </label>
             <label>
               <span>页面内容</span>
-              <textarea v-model="currentSlide.body" rows="9" />
+              <textarea v-model="draft.body" rows="9" placeholder="输入页面内容，每行一条要点" />
             </label>
             <div class="editor-actions">
-              <button class="plain-btn" @click="saveCurrentSlide">保存修改</button>
-              <button class="plain-btn" @click="addSlide">新增页</button>
-              <button class="plain-btn" @click="moveSlide(-1)">上移</button>
-              <button class="plain-btn" @click="moveSlide(1)">下移</button>
-              <button class="danger-btn" @click="deleteSlide">删除页</button>
+              <button class="plain-btn" @click="saveCurrentSlide">💾 保存修改</button>
+              <button class="plain-btn" @click="resetDraft">↩️ 放弃修改</button>
+              <button class="plain-btn" @click="undo" :disabled="undoStack.length === 0">⤺️ 撤销</button>
+              <button class="plain-btn" @click="redo" :disabled="redoStack.length === 0">⤻ 重做</button>
+              <button class="plain-btn" @click="addSlide">➕ 新增页</button>
+              <button class="plain-btn" @click="moveSlide(-1)">⬆️ 上移</button>
+              <button class="plain-btn" @click="moveSlide(1)">⬇️ 下移</button>
+              <button class="danger-btn" @click="deleteSlide">🗑️ 删除页</button>
             </div>
             <p class="edit-status">{{ editStatus }}</p>
           </aside>
@@ -149,10 +157,10 @@
           <!-- Word 文档展示区 -->
           <article class="word-area">
             <div class="slide-toolbar">
-              <span class="word-doc-label">Word 文档预览</span>
-              <button class="plain-btn" @click="zoom = Math.max(0.7, zoom - 0.1)">缩小</button>
+              <span class="word-doc-label">📄 Word 文档预览</span>
+              <button class="plain-btn" @click="zoom = Math.max(0.7, zoom - 0.1)">🔍 缩小</button>
               <span class="slide-toolbar__info">{{ Math.round(zoom * 100) }}%</span>
-              <button class="plain-btn" @click="zoom = Math.min(1.3, zoom + 0.1)">放大</button>
+              <button class="plain-btn" @click="zoom = Math.min(1.3, zoom + 0.1)">🔍 放大</button>
             </div>
 
             <div class="word-frame">
@@ -190,7 +198,7 @@
 
           <!-- Word 编辑器 -->
           <aside class="editor">
-            <h3>编辑 Word 文档</h3>
+            <h3>📝 编辑 Word 文档</h3>
             <label>
               <span>文档标题</span>
               <input v-model="wordDocTitle" type="text" />
@@ -200,15 +208,15 @@
               <textarea v-model="wordDocBody" rows="18" />
             </label>
             <div class="editor-actions">
-              <button class="plain-btn" @click="saveWordDoc">保存文档</button>
+              <button class="plain-btn" @click="saveWordDoc">💾 保存文档</button>
             </div>
             <p class="edit-status">{{ wordEditStatus }}</p>
           </aside>
         </div>
 
         <div class="actions between">
-          <button class="plain-btn" @click="step = 1">返回选择</button>
-          <button class="primary-btn" @click="goToExport">确定为最终版</button>
+          <button class="plain-btn" @click="step = 1">⬅️ 返回选择</button>
+          <button class="primary-btn" @click="goToExport">✅ 确定为最终版</button>
         </div>
       </div>
 
@@ -224,7 +232,7 @@
 
         <div class="export-layout">
           <div class="final-card">
-            <h3>最终版信息</h3>
+            <h3>📋 最终版信息</h3>
             <dl>
               <div><dt>课件类型</dt><dd>{{ typeName }}</dd></div>
               <div><dt>模板风格</dt><dd>{{ templateName }}</dd></div>
@@ -234,11 +242,11 @@
           </div>
 
           <div class="download-card">
-            <h3>选择导出格式</h3>
+            <h3>📥 选择导出格式</h3>
             <div class="export-buttons-row">
-              <button class="export-btn" @click="startDownload('pptx')">下载 .pptx</button>
-              <button class="export-btn" @click="startDownload('docx')">下载 .docx</button>
-              <button class="export-btn export-btn-disabled" @click="downloadLog = 'PDF 导出即将上线，敬请期待。'" title="即将上线">下载 .pdf</button>
+              <button class="export-btn" @click="startDownload('pptx')">📊 下载 .pptx</button>
+              <button class="export-btn" @click="startDownload('docx')">📄 下载 .docx</button>
+              <button class="export-btn export-btn-disabled" @click="downloadLog = 'PDF 导出即将上线，敬请期待。'" title="即将上线">📋 下载 .pdf</button>
             </div>
 
             <div class="download-progress">
@@ -256,8 +264,8 @@
         </div>
 
         <div class="actions between">
-          <button class="plain-btn" @click="step = 2">返回编辑</button>
-          <button class="plain-btn" @click="step = 1">重新选择</button>
+          <button class="plain-btn" @click="step = 2">✏️ 返回编辑</button>
+          <button class="plain-btn" @click="step = 1">🔄 重新选择</button>
         </div>
       </div>
     </div>
@@ -265,12 +273,13 @@
 </template>
 
 <script setup>
-import { ref, computed, watch, onUnmounted } from 'vue'
-import { getDownloadUrl, exportDocument } from '../api'
+import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
+import { getDownloadUrl, exportDocument, exportSlides } from '../api'
 
 const props = defineProps({
   files: { type: Object, default: () => ({}) },
   loading: Boolean,
+  externalSlides: { type: Array, default: null },
 })
 const emit = defineEmits(['revise'])
 
@@ -317,10 +326,54 @@ const current = ref(0)
 const zoom = ref(1)
 const editStatus = ref('当前内容已载入，可直接修改。')
 
-// 生成动画
+// 草稿模式：编辑时改副本，点保存才写回 slides
+const draft = ref({ kind: 'content', title: '', body: '' })
+
+// 撤销/重做栈
+const undoStack = ref([])
+const redoStack = ref([])
+
+function snapshot() {
+  undoStack.value.push(JSON.parse(JSON.stringify(slides.value)))
+  if (undoStack.value.length > 50) undoStack.value.shift()
+  redoStack.value = []
+}
+
+function undo() {
+  if (undoStack.value.length === 0) { editStatus.value = '没有可撤销的操作。'; return }
+  redoStack.value.push(JSON.parse(JSON.stringify(slides.value)))
+  slides.value = undoStack.value.pop()
+  current.value = Math.min(current.value, slides.value.length - 1)
+  syncDraft()
+  editStatus.value = '已撤销上一步操作。'
+}
+
+function redo() {
+  if (redoStack.value.length === 0) { editStatus.value = '没有可重做的操作。'; return }
+  undoStack.value.push(JSON.parse(JSON.stringify(slides.value)))
+  slides.value = redoStack.value.pop()
+  current.value = Math.min(current.value, slides.value.length - 1)
+  syncDraft()
+  editStatus.value = '已重做操作。'
+}
+
+function syncDraft() {
+  const s = slides.value[current.value]
+  if (s) {
+    draft.value = { kind: s.kind, title: s.title, body: s.body }
+  }
+}
+
+function isDirty() {
+  const s = slides.value[current.value]
+  if (!s) return false
+  return draft.value.kind !== s.kind || draft.value.title !== s.title || draft.value.body !== s.body
+}
+
+// 生成进度遮罩（真实 loading，不再用假动画）
 const showOverlay = ref(false)
 const genPercent = ref(0)
-const genText = ref('正在解析教学大纲...')
+const genText = ref('正在加载课件数据...')
 let genTimer = null
 
 // 下载动画
@@ -392,65 +445,118 @@ function renderWord(slide) {
 
 // ---- 操作函数 ----
 function saveCurrentSlide() {
-  slides.value[current.value].title = currentSlide.value.title.trim() || '未命名页面'
-  slides.value[current.value].body = currentSlide.value.body.trim() || '暂无内容'
+  if (!isDirty()) {
+    editStatus.value = '内容未发生变化。'
+    return
+  }
+  snapshot()
+  slides.value[current.value].title = draft.value.title.trim() || '未命名页面'
+  slides.value[current.value].body = draft.value.body.trim() || '暂无内容'
+  slides.value[current.value].kind = draft.value.kind
   editStatus.value = `第 ${current.value + 1} 页已保存。`
 }
 
+function resetDraft() {
+  syncDraft()
+  editStatus.value = '已放弃修改，恢复到保存前的内容。'
+}
+
+// ---- 拖拽排序 ----
+const dragIndex = ref(null)
+const dragOverIndex = ref(null)
+
+function onDragStart(index, e) {
+  dragIndex.value = index
+  e.dataTransfer.effectAllowed = 'move'
+  e.dataTransfer.setData('text/plain', String(index))
+}
+
+function onDragOver(index, e) {
+  e.dataTransfer.dropEffect = 'move'
+  if (dragOverIndex.value !== index) dragOverIndex.value = index
+}
+
+function onDragLeave(index) {
+  if (dragOverIndex.value === index) dragOverIndex.value = null
+}
+
+function onDrop(targetIndex) {
+  const from = dragIndex.value
+  dragOverIndex.value = null
+  dragIndex.value = null
+  if (from === null || from === targetIndex) return
+  snapshot()
+  const item = slides.value.splice(from, 1)[0]
+  slides.value.splice(targetIndex, 0, item)
+  current.value = targetIndex
+  syncDraft()
+  editStatus.value = '页面顺序已通过拖拽调整。'
+}
+
+function onDragEnd() {
+  dragOverIndex.value = null
+  dragIndex.value = null
+}
+
 function addSlide() {
+  snapshot()
   slides.value.splice(current.value + 1, 0, { kind: 'content', title: '新增教学页面', body: '在这里补充新的教学内容、课堂活动或练习题。' })
   current.value += 1
+  syncDraft()
   editStatus.value = '已新增一页。'
 }
 
 function deleteSlide() {
   if (slides.value.length === 1) { editStatus.value = '至少需要保留一页。'; return }
+  // P0-2: 二次确认
+  if (!confirm(`确认删除第 ${current.value + 1} 页「${slides.value[current.value].title}」？此操作可通过撤销恢复。`)) return
+  snapshot()
   slides.value.splice(current.value, 1)
   current.value = Math.max(0, current.value - 1)
-  editStatus.value = '页面已删除。'
+  syncDraft()
+  editStatus.value = '页面已删除。可点击撤销按钮恢复。'
 }
 
 function moveSlide(offset) {
   const target = current.value + offset
   if (target < 0 || target >= slides.value.length) { editStatus.value = '当前页面已经在边界位置。'; return }
+  snapshot()
   const item = slides.value.splice(current.value, 1)[0]
   slides.value.splice(target, 0, item)
   current.value = target
+  syncDraft()
   editStatus.value = '页面顺序已调整。'
 }
 
-// ---- 生成进度动画 ----
-function runGenerateAnimation() {
+// ---- 生成进度遮罩（真实 loading，不再用假动画） ----
+function showLoading(text = '正在加载课件数据...') {
   showOverlay.value = true
   genPercent.value = 0
-  const labels = ['正在解析教学大纲...', '正在生成封面...', '正在生成目录...', '正在生成正文页面...', '正在生成总结页...', '正在套用模板风格...']
-  let li = 0
-  clearInterval(genTimer)
-  genTimer = setInterval(() => {
-    genPercent.value += Math.ceil(Math.random() * 8) + 3
-    if (genPercent.value > 100) genPercent.value = 100
-    const idx = Math.min(labels.length - 1, Math.floor((genPercent.value / 100) * labels.length))
-    if (idx !== li) { li = idx; genText.value = labels[li] }
-    if (genPercent.value >= 100) {
-      clearInterval(genTimer)
-      setTimeout(() => {
-        showOverlay.value = false
-        step.value = 2
-      }, 350)
-    }
-  }, 200)
+  genText.value = text
 }
 
+function hideLoading() {
+  showOverlay.value = false
+}
+
+// ---- 平滑过渡到 Step 2 ----
 function goToPreview() {
   editStatus.value = '当前内容已载入，可直接修改。'
   wordEditStatus.value = '当前内容已载入，可直接修改。'
   if (type.value === 'Word') syncWordEditor()
-  runGenerateAnimation()
+  syncDraft()
+  // 短暂 loading 模拟数据载入，然后进入编辑模式
+  showLoading('正在准备预览环境...')
+  setTimeout(() => {
+    hideLoading()
+    step.value = 2
+  }, 400)
 }
 
 function goToExport() {
+  // 导出前自动保存当前草稿
   if (type.value === 'Word') saveWordDoc()
-  else saveCurrentSlide()
+  else if (isDirty()) saveCurrentSlide()
   downloadPercent.value = 0
   downloadText.value = '尚未开始下载'
   downloadLog.value = '最终版已确认，请选择导出格式。'
@@ -508,22 +614,35 @@ async function startDownload(format) {
   downloadText.value = '正在准备文件'
   downloadLog.value = `正在生成 ${fileName}，请稍候。`
 
-  // 构建课件内容
-  let content = ''
-  slides.value.forEach((s, i) => {
-    const kindLabel = PAGE_KIND_LABELS[s.kind]?.name || '正文'
-    content += `【${kindLabel}】${s.title}\n${s.body}\n\n`
-  })
+  // 发送结构化 slides JSON + 模板风格
+  const slidesData = slides.value.map(s => ({
+    kind: s.kind,
+    title: s.title || '未命名',
+    body: s.body || '',
+  }))
   const title = slides.value[0]?.title || '教学课件'
+  const tpl = template.value
 
   try {
-    downloadPercent.value = 20
+    // 平滑进度动画：0→15→30 在请求发出前
+    downloadPercent.value = 15
     downloadText.value = '正在生成文件'
     downloadLog.value = `正在调用后端导出接口生成 ${fileName}...`
 
-    const blob = await exportDocument(format, content, title)
+    // 启动平滑进度模拟（在等待后端响应期间）
+    let progressSim = 30
+    downloadTimer = setInterval(() => {
+      if (progressSim < 75) {
+        progressSim += Math.random() * 8 + 2
+        if (progressSim > 75) progressSim = 75
+        downloadPercent.value = Math.round(progressSim)
+      }
+    }, 400)
 
-    downloadPercent.value = 80
+    const blob = await exportSlides(format, slidesData, title, tpl)
+
+    clearInterval(downloadTimer)
+    downloadPercent.value = 90
     downloadText.value = '即将完成'
 
     // 触发浏览器下载
@@ -538,21 +657,96 @@ async function startDownload(format) {
 
     downloadPercent.value = 100
     downloadText.value = '下载完成'
-    downloadLog.value = `✅ 已成功下载 ${fileName}`
+    downloadLog.value = `✅ 已成功下载 ${fileName}（模板：${templateName.value}）`
   } catch (e) {
+    clearInterval(downloadTimer)
     downloadText.value = '下载失败'
     downloadLog.value = `❌ 下载失败：${e.response?.data?.detail || e.message}`
   }
 }
 
+// ---- 监听 current 变化时同步草稿 ----
+watch(current, () => {
+  syncDraft()
+  editStatus.value = '当前内容已载入，可直接修改。'
+}, { immediate: true })
+
+// ---- 监听外部 slides 数据（从对话端送入） ----
+watch(() => props.externalSlides, (newSlides) => {
+  if (newSlides && newSlides.length > 0) {
+    // 深拷贝，避免修改原数据
+    slides.value = JSON.parse(JSON.stringify(newSlides))
+    current.value = 0
+    step.value = 2  // 直接进入编辑模式
+    undoStack.value = []
+    redoStack.value = []
+    syncDraft()
+    editStatus.value = '已从对话内容载入，可直接修改标题、内容和页面类型。'
+    // 如果是 Word 类型，同步编辑器
+    if (type.value === 'Word') syncWordEditor()
+  }
+}, { deep: true })
+
 // ---- 监听 loading 变化（来自父组件） ----
 watch(() => props.loading, (v) => {
-  if (v) runGenerateAnimation()
+  if (v) {
+    showLoading('正在生成课件数据...')
+  } else {
+    hideLoading()
+  }
+})
+
+// ---- 键盘快捷键 ----
+function onKeydown(e) {
+  // 只在 Step 2 编辑模式生效
+  if (step.value !== 2) return
+  // 如果焦点在输入框/文本域/选择框里，不拦截
+  const tag = e.target?.tagName?.toLowerCase()
+  if (tag === 'input' || tag === 'textarea' || tag === 'select') return
+
+  // Ctrl+Z = 撤销, Ctrl+Shift+Z 或 Ctrl+Y = 重做
+  if ((e.ctrlKey || e.metaKey) && e.key === 'z' && !e.shiftKey) {
+    e.preventDefault(); undo(); return
+  }
+  if ((e.ctrlKey || e.metaKey) && (e.key === 'y' || (e.key === 'z' && e.shiftKey))) {
+    e.preventDefault(); redo(); return
+  }
+
+  // Ctrl+D = 复制当前页
+  if ((e.ctrlKey || e.metaKey) && e.key === 'd') {
+    e.preventDefault()
+    snapshot()
+    const cur = slides.value[current.value]
+    slides.value.splice(current.value + 1, 0, JSON.parse(JSON.stringify(cur)))
+    current.value += 1
+    syncDraft()
+    editStatus.value = '已复制当前页。'
+    return
+  }
+
+  // 左右方向键翻页
+  if (e.key === 'ArrowLeft' && current.value > 0) {
+    e.preventDefault(); current.value -= 1; return
+  }
+  if (e.key === 'ArrowRight' && current.value < slides.value.length - 1) {
+    e.preventDefault(); current.value += 1; return
+  }
+
+  // Delete/Backspace = 删除当前页（有确认）
+  if ((e.key === 'Delete' || e.key === 'Backspace') && slides.value.length > 1) {
+    e.preventDefault()
+    deleteSlide()
+    return
+  }
+}
+
+onMounted(() => {
+  window.addEventListener('keydown', onKeydown)
 })
 
 // ---- 清理 ----
 onUnmounted(() => {
-  clearInterval(genTimer)
+  window.removeEventListener('keydown', onKeydown)
   clearInterval(downloadTimer)
 })
 </script>
@@ -601,6 +795,13 @@ onUnmounted(() => {
 .generate-text { margin:0 0 16px; color:var(--text-secondary); font-size:14px; }
 .generate-track { height:8px; border-radius:999px; background:var(--glass-md); overflow:hidden; }
 .generate-bar { height:100%; background:linear-gradient(90deg,var(--accent),var(--text-primary)); transition:width 0.2s ease; }
+.generate-bar-indeterminate {
+  width:40%; animation:indeterminate 1.2s ease-in-out infinite;
+}
+@keyframes indeterminate {
+  0% { margin-left:-40%; }
+  100% { margin-left:100%; }
+}
 
 /* ========== 面板头部 ========== */
 .panel-head { display:flex; align-items:flex-start; justify-content:space-between; gap:14px; margin-bottom:18px; }
@@ -658,6 +859,7 @@ onUnmounted(() => {
   backdrop-filter:var(--blur-sm); -webkit-backdrop-filter:var(--blur-sm);
 }
 .thumb.active { background:var(--glass-lg); border-color:var(--border-glow); }
+.thumb-drag-over { border:2px dashed var(--accent); background:rgba(0,212,170,0.08); }
 .thumb-top { display:flex; align-items:center; justify-content:space-between; margin-bottom:5px; }
 .thumb-kind { padding:2px 6px; border-radius:999px; color:#fff; font-size:10px; font-weight:700; }
 .thumb-no { font-size:11px; opacity:0.65; }
@@ -728,6 +930,7 @@ onUnmounted(() => {
 .editor input:focus, .editor textarea:focus, .editor select:focus { border-color:var(--border-glow); }
 .editor-actions { display:grid; grid-template-columns:repeat(2,1fr); gap:7px; }
 .editor-actions .danger-btn { grid-column:span 2; }
+.editor-actions .plain-btn:disabled { opacity:0.4; cursor:not-allowed; }
 .edit-status { margin:10px 0 0; padding:10px; border-radius:var(--r-sm); color:var(--text-tertiary); background:var(--glass-sm); font-size:12px; line-height:1.5; }
 
 /* ========== 导出布局 ========== */

@@ -148,6 +148,10 @@
               :disabled="exporting"
               @click="onExport('pptx', i)"
             >📊 下载 PPT 课件</button>
+            <button
+              class="btn-export btn-export-preview"
+              @click="onSendToPreview(i)"
+            >✏️ 送入预览编辑</button>
           </div>
         </div>
       </div>
@@ -228,7 +232,7 @@ const props = defineProps({
   loading: Boolean,
   intent: Object,
 })
-const emit = defineEmits(['send', 'generate', 'stop', 'new-session'])
+const emit = defineEmits(['send', 'generate', 'stop', 'new-session', 'send-to-preview'])
 
 const input = ref('')
 const inputEl = ref(null)
@@ -460,6 +464,17 @@ async function onExport(format, aiMsgIndex) {
   } finally {
     exporting.value = false
   }
+}
+
+// ---- 送入预览编辑 ----
+function onSendToPreview(aiMsgIndex) {
+  const aiMsg = props.messages[aiMsgIndex]
+  if (!aiMsg || !aiMsg.content) return
+  const prevUser = props.messages[aiMsgIndex - 1]
+  const rawTitle = (prevUser && prevUser.content) ? prevUser.content : '教学文档'
+  const title = rawTitle.replace(/[\\/*?:"<>|]/g, '').substring(0, 30) || '教学文档'
+  const exportType = getExportType(aiMsgIndex)
+  emit('send-to-preview', { content: aiMsg.content, title, exportType })
 }
 
 // ---- 语音输入（Web Speech API，不可用时静默降级） ----
@@ -834,6 +849,8 @@ onMounted(() => {
 .btn-export-docx:hover:not(:disabled) { background: rgba(52, 211, 153, 0.15); }
 .btn-export-pptx { background: rgba(251, 191, 36, 0.1); color: var(--warning); border-color: rgba(251, 191, 36, 0.3); }
 .btn-export-pptx:hover:not(:disabled) { background: rgba(251, 191, 36, 0.15); }
+.btn-export-preview { background: rgba(0, 212, 170, 0.1); color: var(--accent); border-color: rgba(0, 212, 170, 0.3); }
+.btn-export-preview:hover { background: rgba(0, 212, 170, 0.15); transform: translateY(-1px); }
 
 .scroll-nav {
   position: absolute;

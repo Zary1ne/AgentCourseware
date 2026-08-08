@@ -4,8 +4,8 @@
     <div class="workspace__main">
       <div class="workspace__content">
         <KnowledgePanel v-show="currentStep === 0" :activeTask="activeTask" :taskId="activeTask.id" @file-uploaded="onFileUploaded" />
-        <ChatPanel v-show="currentStep === 1" :messages="activeTask.messages" :loading="chatLoading" :intent="activeTask.intent" @send="onSendMessage" @generate="onGenerate" @stop="onStopChat" @new-session="onNewSession" />
-        <PreviewPanel v-show="currentStep === 2" :files="activeTask.genFiles" :loading="genLoading" @revise="onRevise" />
+        <ChatPanel v-show="currentStep === 1" :messages="activeTask.messages" :loading="chatLoading" :intent="activeTask.intent" @send="onSendMessage" @generate="onGenerate" @stop="onStopChat" @new-session="onNewSession" @send-to-preview="onSendToPreview" />
+        <PreviewPanel v-show="currentStep === 2" :files="activeTask.genFiles" :loading="genLoading" :external-slides="previewSlides" @revise="onRevise" />
       </div>
       <div class="workspace__bar">
         <div class="workspace__bar-left">
@@ -39,6 +39,67 @@ const genLoading = ref(false)
 let abortController = null
 
 const fileCount = computed(() => Object.keys(activeTask.value.genFiles).length)
+
+// 从对话端送入预览端的 slides 数据
+const previewSlides = ref(null)
+
+// 解析 AI 文本内容为 slides 结构
+function parseContentToSlides(content, title) {
+  const slides = []
+  // 统一换行符
+  const text = content.replace(/\\r\\n/g, '\n').replace(/\\n/g, '\n').replace(/\r\n/g, '\n')
+  // 按空行分段
+  const sections = text.trim().split(/\n\n+/)
+
+  for (const section of sections) {
+    const lines = section.split('\n').filter(l => l.trim())
+    if (lines.length === 0) continue
+
+    const firstLine = lines[0].trim()
+    let kind = 'content'
+    let slideTitle = firstLine
+    let body = lines.slice(1).join('\n')
+
+    // 识别【封面】、【目录】、【总结】等标记
+    if (/【封面|【课题|【标题/.test(firstLine)) {
+      kind = 'cover'
+      slideTitle = firstLine.replace(/^【.+?】/, '').trim() || title
+      body = lines.slice(1).join('\n')
+    } else if (/【目录|【内容|【导览/.test(firstLine)) {
+      kind = 'catalog'
+      slideTitle = firstLine.replace(/^【.+?】/, '').trim() || '目录'
+    } else if (/【总结|【回顾|【小结/.test(firstLine)) {
+      kind = 'summary'
+      slideTitle = firstLine.replace(/^【.+?】/, '').trim() || '总结'
+    } else if (firstLine.startsWith('【')) {
+      slideTitle = firstLine.replace(/^【.+?】/, '').trim() || firstLine
+    }
+
+    // 第一页如果没有识别为封面，但有标题感（行数少），设为封面
+    if (slides.length === 0 && kind === 'content' && lines.length <= 3) {
+      kind = 'cover'
+    }
+
+    slides.push({ kind, title: slideTitle || '未命名', body: body || '暂无内容' })
+  }
+
+  // 兜底：如果解析失败，把全部内容作为封面
+  if (slides.length === 0) {
+    slides.push({ kind: 'cover', title: title || '教学课件', body: content })
+  }
+
+  return slides
+}
+
+// 接收 ChatPanel 的「送入预览编辑」事件
+function onSendToPreview({ content, title, exportType }) {
+  previewSlides.value = parseContentToSlides(content, title)
+  // 根据 exportType 设置课件类型提示（存入 activeTask 供 PreviewPanel 使用）
+  if (exportType) {
+    activeTask.value.previewType = exportType === 'docx' ? 'Word' : 'PPT'
+  }
+  setStep(2)  // 跳转到预览步骤
+}
 
 function onFileUploaded(result) {
   if (result.knowledge_base?.success) {

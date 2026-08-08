@@ -22,6 +22,12 @@ export async function exportDocument(format, content, title = '教学文档') {
   return resp.data
 }
 
+// 结构化 slides 导出：直接发送 slides JSON + 模板风格，后端按结构生成文件
+export async function exportSlides(format, slides, title = '教学文档', template = 'academic') {
+  const resp = await api.post(`/chat/export-slides/${format}`, { slides, title, template }, { responseType: 'blob' })
+  return resp.data
+}
+
 export function uploadToKnowledgeBase(file, taskId = 'default') {
   const fd = new FormData(); fd.append('file', file); fd.append('task_id', taskId)
   return api.post('/knowledge/upload', fd, { headers: { 'Content-Type': 'multipart/form-data' } })

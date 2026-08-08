@@ -248,3 +248,270 @@ def parse_content_to_slides(content):
         slides = [{"title": content.strip().split("\n")[0] if content.strip() else "课件", "bullets": [l.strip() for l in content.strip().split("\n") if l.strip()]}]
 
     return slides
+
+
+# ====== 模板风格系统 ======
+
+TEMPLATE_STYLES = {
+    "academic": {
+        "name": "学术严谨风",
+        "bg_color": "FFFFFF",
+        "title_color": "1F6FEB",
+        "body_color": "333333",
+        "title_size": 3600,
+        "body_size": 2400,
+        "accent_color": "1F6FEB",
+    },
+    "lively": {
+        "name": "活泼互动风",
+        "bg_color": "FFF8F0",
+        "title_color": "FF6B6B",
+        "body_color": "555555",
+        "title_size": 3400,
+        "body_size": 2400,
+        "accent_color": "FFB400",
+    },
+    "minimal": {
+        "name": "极简商务风",
+        "bg_color": "FAFAFA",
+        "title_color": "333333",
+        "body_color": "666666",
+        "title_size": 3200,
+        "body_size": 2200,
+        "accent_color": "888888",
+    },
+}
+
+KIND_LABELS = {
+    "cover": "封面",
+    "catalog": "目录",
+    "content": "正文",
+    "summary": "总结",
+}
+
+
+def _esc(s):
+    return str(s).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+def _make_slide_xml_styled(title, bullets, kind, template_style):
+    """Generate slide XML with template-specific styling and kind awareness."""
+    style = TEMPLATE_STYLES.get(template_style, TEMPLATE_STYLES["academic"])
+    title_color = style["title_color"]
+    body_color = style["body_color"]
+    title_size = style["title_size"]
+    body_size = style["body_size"]
+    bg_color = style["bg_color"]
+    accent = style["accent_color"]
+    title_safe = _esc(title)
+    kind_label = KIND_LABELS.get(kind, "正文")
+    bullet_elems = ""
+    for b in bullets:
+        b_safe = _esc(b)
+        bullet_elems += (
+            f'<a:p><a:r><a:rPr lang="zh-CN" sz="{body_size}">'
+            f'<a:solidFill><a:srgbClr val="{body_color}"/></a:solidFill>'
+            f'</a:rPr><a:t>{b_safe}</a:t></a:r>'
+            f'<a:endParaRPr lang="zh-CN" sz="{body_size}">'
+            f'<a:solidFill><a:srgbClr val="{body_color}"/></a:solidFill>'
+            f'</a:endParaRPr></a:p>'
+        )
+    kind_badge = (
+        f'<a:p><a:r><a:rPr lang="zh-CN" sz="1400" b="1">'
+        f'<a:solidFill><a:srgbClr val="{accent}"/></a:solidFill>'
+        f'</a:rPr><a:t>[{kind_label}]</a:t></a:r></a:p>'
+    )
+    anchor = 'anchor="ctr"' if kind == "cover" else ''
+    return f"""<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<p:sld xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"
+       xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+       xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main">
+  <p:cSld>
+    <p:spTree>
+      <p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr>
+      <p:grpSpPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="0" cy="0"/><a:chOff x="0" y="0"/><a:chExt cx="0" cy="0"/></a:xfrm></p:grpSpPr>
+      <p:sp>
+        <p:nvSpPr><p:cNvPr id="2" name="Title"/><p:cNvSpPr><a:spLocks noGrp="1"/></p:cNvSpPr><p:nvPr><p:ph type="ctrTitle"/></p:nvPr></p:nvSpPr>
+        <p:spPr><a:xfrm><a:off x="685800" y="274320"/><a:ext cx="8255000" cy="1143000"/></a:xfrm></p:spPr>
+        <p:txBody><a:bodyPr {anchor}/><a:lstStyle/>
+          {kind_badge}
+          <a:p><a:r><a:rPr lang="zh-CN" sz="{title_size}" b="1"><a:solidFill><a:srgbClr val="{title_color}"/></a:solidFill></a:rPr><a:t>{title_safe}</a:t></a:r></a:p>
+        </p:txBody>
+      </p:sp>
+      <p:sp>
+        <p:nvSpPr><p:cNvPr id="3" name="Content"/><p:cNvSpPr><a:spLocks noGrp="1"/></p:cNvSpPr><p:nvPr><p:ph type="body" idx="1"/></p:nvPr></p:nvSpPr>
+        <p:spPr><a:xfrm><a:off x="914400" y="1600200"/><a:ext cx="7315200" cy="4754880"/></a:xfrm></p:spPr>
+        <p:txBody><a:bodyPr {anchor}/><a:lstStyle/>
+          {bullet_elems}
+        </p:txBody>
+      </p:sp>
+    </p:spTree>
+  </p:cSld>
+  <p:clrMapOvr><a:masterClrMapping/></p:clrMapOvr>
+</p:sld>"""
+
+
+def create_pptx_from_slides(title, slides_data, template="academic"):
+    """
+    Create a PPTX file from structured slides data with template styling.
+
+    Args:
+        title: Presentation title (str)
+        slides_data: List of dicts with 'kind', 'title', 'body' keys
+        template: Template style name - "academic", "lively", or "minimal"
+
+    Returns:
+        bytes of the PPTX file
+    """
+    buf = io.BytesIO()
+    slide_count = len(slides_data)
+    style = TEMPLATE_STYLES.get(template, TEMPLATE_STYLES["academic"])
+    bg_color = style["bg_color"]
+    accent1 = style["accent_color"]
+    title_c = style["title_color"]
+
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        # [Content_Types].xml
+        slide_types = "".join(
+            f'<Override PartName="/ppt/slides/slide{i+1}.xml" '
+            f'ContentType="application/vnd.openxmlformats-officedocument.presentationml.slide+xml"/>'
+            for i in range(slide_count)
+        )
+        zf.writestr("[Content_Types].xml", f"""<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+  <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+  <Default Extension="xml" ContentType="application/xml"/>
+  <Override PartName="/ppt/presentation.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.presentation.main+xml"/>
+  <Override PartName="/ppt/slideMasters/slideMaster1.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.slideMaster+xml"/>
+  <Override PartName="/ppt/slideLayouts/slideLayout1.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.slideLayout+xml"/>
+  <Override PartName="/ppt/theme/theme1.xml" ContentType="application/vnd.openxmlformats-officedocument.theme+xml"/>
+  {slide_types}
+  <Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-package.core-properties+xml"/>
+  <Override PartName="/docProps/app.xml" ContentType="application/vnd.openxmlformats-officedocument.extended-properties+xml"/>
+</Types>""")
+
+        zf.writestr("_rels/.rels", """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="ppt/presentation.xml"/>
+  <Relationship Id="rId2" Type="http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties" Target="docProps/core.xml"/>
+  <Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/extended-properties" Target="docProps/app.xml"/>
+</Relationships>""")
+
+        slide_refs = ""
+        for i in range(slide_count):
+            sid = 256 + i
+            slide_refs += f'<p:sldId id="{sid}" r:id="rId{i+2}"/>'
+        slide_ids = f"""<p:sldIdLst>{slide_refs}</p:sldIdLst>"""
+
+        zf.writestr("ppt/presentation.xml", f"""<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<p:presentation xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"
+                xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+                xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main">
+  <p:sldMasterIdLst><p:sldMasterId id="2147483648" r:id="rId1"/></p:sldMasterIdLst>
+  {slide_ids}
+  <p:sldSz cx="9144000" cy="6858000" type="screen4x3"/>
+</p:presentation>""")
+
+        slide_rels = "".join(
+            f'<Relationship Id="rId{i+2}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slide" Target="slides/slide{i+1}.xml"/>'
+            for i in range(slide_count)
+        )
+        zf.writestr("ppt/_rels/presentation.xml.rels", f"""<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slideMaster" Target="slideMasters/slideMaster1.xml"/>
+  {slide_rels}
+  <Relationship Id="rId{slide_count+2}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/theme" Target="theme/theme1.xml"/>
+</Relationships>""")
+
+        for i, slide in enumerate(slides_data):
+            slide_title = slide.get("title", "")
+            slide_body = slide.get("body", "")
+            slide_kind = slide.get("kind", "content")
+            bullets = [line.strip() for line in slide_body.split("\n") if line.strip()]
+            zf.writestr(f"ppt/slides/slide{i+1}.xml", _make_slide_xml_styled(slide_title, bullets, slide_kind, template))
+            zf.writestr(f"ppt/slides/_rels/slide{i+1}.xml.rels", """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slideLayout" Target="../slideLayouts/slideLayout1.xml"/>
+</Relationships>""")
+
+        zf.writestr("ppt/slideMasters/slideMaster1.xml", f"""<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<p:sldMaster xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"
+             xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+             xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main">
+  <p:cSld>
+    <p:bg>
+      <p:bgPr>
+        <a:solidFill><a:srgbClr val="{bg_color}"/></a:solidFill>
+      </p:bgPr>
+    </p:bg>
+    <p:spTree><p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr>
+    <p:grpSpPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="0" cy="0"/><a:chOff x="0" y="0"/><a:chExt cx="0" cy="0"/></a:xfrm></p:grpSpPr>
+    </p:spTree>
+  </p:cSld>
+  <p:clrMap bg1="lt1" tx1="dk1" bg2="lt2" tx2="dk2" accent1="accent1" accent2="accent2" accent3="accent3" accent4="accent4" accent5="accent5" accent6="accent6" hlink="hlink" folHlink="folHlink"/>
+  <p:sldLayoutIdLst><p:sldLayoutId id="2147483649" r:id="rId1"/></p:sldLayoutIdLst>
+</p:sldMaster>""")
+        zf.writestr("ppt/slideMasters/_rels/slideMaster1.xml.rels", """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slideLayout" Target="../slideLayouts/slideLayout1.xml"/>
+  <Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/theme" Target="../theme/theme1.xml"/>
+</Relationships>""")
+
+        zf.writestr("ppt/slideLayouts/slideLayout1.xml", f"""<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<p:sldLayout xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"
+             xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+             xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" type="titleAndContent">
+  <p:cSld name="Title and Content">
+    <p:bg>
+      <p:bgPr>
+        <a:solidFill><a:srgbClr val="{bg_color}"/></a:solidFill>
+      </p:bgPr>
+    </p:bg>
+    <p:spTree><p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr>
+    <p:grpSpPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="0" cy="0"/><a:chOff x="0" y="0"/><a:chExt cx="0" cy="0"/></a:xfrm></p:grpSpPr>
+    <p:sp><p:nvSpPr><p:cNvPr id="2" name="Title"/><p:cNvSpPr><a:spLocks noGrp="1"/></p:cNvSpPr><p:nvPr><p:ph type="ctrTitle"/></p:nvPr></p:nvSpPr></p:sp>
+    <p:sp><p:nvSpPr><p:cNvPr id="3" name="Content"/><p:cNvSpPr><a:spLocks noGrp="1"/></p:cNvSpPr><p:nvPr><p:ph type="body" idx="1"/></p:nvPr></p:nvSpPr></p:sp>
+    </p:spTree></p:cSld>
+</p:sldLayout>""")
+        zf.writestr("ppt/slideLayouts/_rels/slideLayout1.xml.rels", """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slideMaster" Target="../slideMasters/slideMaster1.xml"/>
+</Relationships>""")
+
+        zf.writestr("ppt/theme/theme1.xml", f"""<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<a:theme xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" name="{style['name']}">
+  <a:themeElements>
+    <a:clrScheme name="{style['name']}">
+      <a:dk1><a:srgbClr val="000000"/></a:dk1><a:lt1><a:srgbClr val="{bg_color}"/></a:lt1>
+      <a:dk2><a:srgbClr val="44546A"/></a:dk2><a:lt2><a:srgbClr val="E7E6E6"/></a:lt2>
+      <a:accent1><a:srgbClr val="{accent1}"/></a:accent1><a:accent2><a:srgbClr val="ED7D31"/></a:accent2>
+      <a:accent3><a:srgbClr val="A5A5A5"/></a:accent3><a:accent4><a:srgbClr val="FFC000"/></a:accent4>
+      <a:accent5><a:srgbClr val="5B9BD5"/></a:accent5><a:accent6><a:srgbClr val="70AD47"/></a:accent6>
+      <a:hlink><a:srgbClr val="{title_c}"/></a:hlink><a:folHlink><a:srgbClr val="954F72"/></a:folHlink>
+    </a:clrScheme>
+    <a:fontScheme name="{style['name']}">
+      <a:majorFont><a:latin typeface="Calibri"/><a:ea typeface="Microsoft YaHei"/></a:majorFont>
+      <a:minorFont><a:latin typeface="Calibri"/><a:ea typeface="Microsoft YaHei"/></a:minorFont>
+    </a:fontScheme>
+    <a:fmtScheme name="{style['name']}"><a:fillStyleLst/><a:lnStyleLst/><a:effectStyleLst/><a:bgFillStyleLst/></a:fmtScheme>
+  </a:themeElements>
+</a:theme>""")
+
+        now = datetime.datetime.now().isoformat()
+        zf.writestr("docProps/core.xml", f"""<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties"
+                   xmlns:dc="http://purl.org/dc/elements/1.1/"
+                   xmlns:dcterms="http://purl.org/dc/terms/"
+                   xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+  <dc:title>{_esc(title)}</dc:title><dc:creator>AI Teaching Assistant</dc:creator>
+  <dcterms:created xsi:type="dcterms:W3CDTF">{now}</dcterms:created>
+  <dcterms:modified xsi:type="dcterms:W3CDTF">{now}</dcterms:modified>
+</cp:coreProperties>""")
+
+        zf.writestr("docProps/app.xml", f"""<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/extended-properties">
+  <Application>AI Teaching Assistant</Application>
+  <Slides>{slide_count}</Slides>
+</Properties>""")
+
+    return buf.getvalue()

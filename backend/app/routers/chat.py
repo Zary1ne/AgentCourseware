@@ -355,3 +355,53 @@ async def export_pptx(request: Request):
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/export-slides/{format}")
+async def export_slides(format: str, request: Request):
+    """从结构化 slides JSON 导出文件（支持模板风格）"""
+    data = await request.json()
+    slides_data = data.get("slides", [])
+    title = data.get("title", "教学课件")
+    template = data.get("template", "academic")
+
+    if not slides_data:
+        raise HTTPException(status_code=400, detail="No slides data")
+
+    safe = re.sub(r'[\\/*?:"<>|]', '_', title)
+    quoted = quote(safe, safe='')
+
+    if format == "pptx":
+        try:
+            from app.services.pptx_builder import create_pptx_from_slides
+            pptx_bytes = create_pptx_from_slides(title, slides_data, template)
+            return Response(
+                pptx_bytes,
+                media_type="application/vnd.openxmlformats-officedocument.presentationml.presentation",
+                headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quoted}.pptx"}
+            )
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
+
+    elif format == "docx":
+        try:
+            # 将结构化 slides 转为带【类型】标记的文本，复用 build_docx
+            content_parts = []
+            kind_labels = {
+                "cover": "封面", "catalog": "目录", "content": "正文", "summary": "总结"
+            }
+            for s in slides_data:
+                kind_label = kind_labels.get(s.get("kind", "content"), "正文")
+                content_parts.append(f"【{kind_label}】{s.get('title', '')}\n{s.get('body', '')}")
+            content = "\n\n".join(content_parts)
+            buf = build_docx(title, content)
+            return Response(
+                buf.getvalue(),
+                media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quoted}.docx"}
+            )
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
+
+    else:
+        raise HTTPException(status_code=400, detail=f"Unsupported format: {format}")
