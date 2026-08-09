@@ -66,8 +66,8 @@ const year = new Date().getFullYear()
 
 .footer__brand { display: flex; flex-direction: column; gap: 14px; }
 .footer__logo { margin-bottom: 4px; }
-.footer__name { font-size: 18px; font-weight: 700; color: var(--text-primary); letter-spacing: -0.02em; }
-.footer__desc { font-size: 14px; color: var(--text-secondary); line-height: 1.7; max-width: 280px; }
+.footer__name { font-size: 18px; font-weight: 700; color: var(--text-primary); letter-spacing: -0.01em; }
+.footer__desc { font-size: 14px; color: var(--text-secondary); line-height: 1.65; max-width: 280px; }
 
 .footer__social { display: flex; gap: 14px; margin-top: 4px; }
 .footer__social a { color: var(--text-tertiary); transition: color var(--t-fast); display: flex; }

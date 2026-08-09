@@ -11,7 +11,7 @@
         <span class="navbar__name">Teaching Agent</span>
       </router-link>
 
-      <nav class="navbar__links">
+      <nav :class="['navbar__links', { 'navbar__links--open': mobileMenuOpen }]">
         <a href="#" class="navbar__link">产品</a>
         <a href="#" class="navbar__link">学习</a>
         <a href="#" class="navbar__link">文档</a>
@@ -20,9 +20,15 @@
       </nav>
 
       <div class="navbar__actions">
-        <router-link to="/app" class="btn btn-primary btn-sm">开始使用</router-link>
-        <a href="#contact" class="btn btn-secondary btn-sm">预约演示</a>
+        <router-link to="/app" class="btn btn-primary btn-sm navbar__action-desktop">开始使用</router-link>
+        <a href="#contact" class="btn btn-secondary btn-sm navbar__action-desktop">预约演示</a>
       </div>
+
+      <button class="navbar__hamburger" @click="mobileMenuOpen = !mobileMenuOpen" aria-label="菜单">
+        <span :class="{ 'open': mobileMenuOpen }" />
+        <span :class="{ 'open': mobileMenuOpen }" />
+        <span :class="{ 'open': mobileMenuOpen }" />
+      </button>
     </div>
   </header>
 </template>
@@ -30,6 +36,7 @@
 <script setup>
 import { ref, onMounted, onUnmounted } from 'vue'
 const scrolled = ref(false)
+const mobileMenuOpen = ref(false)
 function onScroll() { scrolled.value = window.scrollY > 30 }
 onMounted(() => window.addEventListener('scroll', onScroll, { passive: true }))
 onUnmounted(() => window.removeEventListener('scroll', onScroll))
@@ -60,7 +67,7 @@ onUnmounted(() => window.removeEventListener('scroll', onScroll))
 .navbar__logo { display: flex; align-items: center; }
 .navbar__name {
   font-size: 17px; font-weight: 700; color: var(--text-primary);
-  letter-spacing: -0.02em;
+  letter-spacing: -0.01em;
 }
 .navbar__links { display: flex; gap: 4px; }
 .navbar__link {
@@ -73,8 +80,37 @@ onUnmounted(() => window.removeEventListener('scroll', onScroll))
 }
 .navbar__actions { display: flex; align-items: center; gap: 10px; }
 
+/* Hamburger button */
+.navbar__hamburger {
+  display: none; flex-direction: column; gap: 5px;
+  background: none; border: none; cursor: pointer; padding: 8px;
+}
+.navbar__hamburger span {
+  width: 22px; height: 2px; border-radius: 2px;
+  background: var(--text-primary);
+  transition: all 0.3s var(--ease-out);
+}
+.navbar__hamburger span.open:nth-child(1) { transform: translateY(7px) rotate(45deg); }
+.navbar__hamburger span.open:nth-child(2) { opacity: 0; }
+.navbar__hamburger span.open:nth-child(3) { transform: translateY(-7px) rotate(-45deg); }
+
 @media (max-width: 860px) {
-  .navbar__links { display: none; }
   .navbar { padding: 0 20px; }
+  .navbar__links {
+    position: absolute; top: var(--navbar-height); left: 0; right: 0;
+    flex-direction: column; gap: 0;
+    background: rgba(10, 10, 18, 0.95);
+    backdrop-filter: blur(20px);
+    border-bottom: 1px solid var(--border-light);
+    max-height: 0; overflow: hidden;
+    transition: max-height 0.3s var(--ease-out);
+  }
+  .navbar__links--open { max-height: 320px; }
+  .navbar__links .navbar__link {
+    padding: 14px 24px; border-radius: 0;
+    border-bottom: 1px solid var(--border-light);
+  }
+  .navbar__action-desktop { display: none; }
+  .navbar__hamburger { display: flex; }
 }
 </style>

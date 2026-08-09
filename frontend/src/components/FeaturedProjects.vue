@@ -8,7 +8,7 @@
       </div>
 
       <div class="featured__grid">
-        <article v-for="(p, i) in projects" :key="p.id" :class="['project-card', 'animate-in', i > 0 ? 'anim-d' + i : '']">
+        <article v-for="(p, i) in projects" :key="p.id" :class="['project-card', 'card-spotlight']" v-scroll-in="{ delay: i * 100 }" @mousemove="onCardMove($event, i)" ref="cardRefs">
           <div class="project-card__top" :style="{ background: p.accent }" />
           <div class="project-card__body">
             <span class="project-card__cat">{{ p.category }}</span>
@@ -30,19 +30,31 @@
 </template>
 
 <script setup>
+import { ref } from 'vue'
+
+const cardRefs = ref([])
+
+function onCardMove(e, i) {
+  const card = cardRefs.value?.[i]
+  if (!card) return
+  const rect = card.getBoundingClientRect()
+  card.style.setProperty('--mx', `${e.clientX - rect.left}px`)
+  card.style.setProperty('--my', `${e.clientY - rect.top}px`)
+}
+
 const projects = [
   { id:1, title:'物理 · 牛顿第一定律', category:'完整课件包', accent:'linear-gradient(90deg, #00D4AA 0%, #00B894 100%)', description:'从教学意图出发，一键生成互动 PPT、讲义和随堂测验，含实验演示与课堂互动设计。', tags:['PPT课件','讲义','测验'] },
-  { id:2, title:'数据结构 · 二叉树遍历', category:'讲义课件', accent:'linear-gradient(90deg, #00D4AA 0%, #00856A 100%)', description:'基于上传教材自动生成的课堂讲义，通过 RAG 增强内容，包含代码示例与可视化图解。', tags:['讲义','图解','示例代码'] },
-  { id:3, title:'英语 · 议论文写作工坊', category:'互动课程', accent:'linear-gradient(90deg, #00D4AA 0%, #00E8BA 100%)', description:'结构化写作引导课程，包含范文分析、结构模板和同学互评评分表，全流程 AI 辅助。', tags:['写作引导','模板','评分表'] },
+  { id:2, title:'数据结构 · 二叉树遍历', category:'讲义课件', accent:'linear-gradient(90deg, #6366f1 0%, #4f46e5 100%)', description:'基于上传教材自动生成的课堂讲义，通过 RAG 增强内容，包含代码示例与可视化图解。', tags:['讲义','图解','示例代码'] },
+  { id:3, title:'英语 · 议论文写作工坊', category:'互动课程', accent:'linear-gradient(90deg, #FBBF24 0%, #F59E0B 100%)', description:'结构化写作引导课程，包含范文分析、结构模板和同学互评评分表，全流程 AI 辅助。', tags:['写作引导','模板','评分表'] },
 ]
 </script>
 
 <style scoped>
-.featured { padding: 100px 40px 120px; background: var(--bg-page); }
+.featured { padding: 80px 40px; background: var(--bg-page); }
 .featured__inner { max-width: var(--max-width); margin: 0 auto; }
 
-.featured__header { text-align: center; margin-bottom: 56px; }
-.featured__title { font-size: clamp(28px, 3.5vw, 40px); font-weight: 700; letter-spacing: -0.025em; color: var(--text-primary); margin-bottom: 10px; }
+.featured__header { text-align: center; margin-bottom: 48px; }
+.featured__title { font-size: clamp(28px, 3.5vw, 40px); font-weight: 700; letter-spacing: -0.015em; color: var(--text-primary); margin-bottom: 10px; }
 .featured__subtitle { font-size: 16px; color: var(--text-secondary); }
 
 .featured__grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 24px; }
@@ -63,7 +75,7 @@ const projects = [
 .project-card__body { padding: 28px 24px 24px; display: flex; flex-direction: column; gap: 12px; flex: 1; }
 .project-card__cat { font-size: 12px; font-weight: 600; color: var(--accent); letter-spacing: 0.03em; text-transform: uppercase; }
 .project-card__title { font-size: 18px; font-weight: 700; letter-spacing: -0.015em; color: var(--text-primary); line-height: 1.3; }
-.project-card__desc { font-size: 14px; color: var(--text-secondary); line-height: 1.7; flex: 1; }
+.project-card__desc { font-size: 14px; color: var(--text-secondary); line-height: 1.65; flex: 1; }
 
 .project-card__footer { display: flex; align-items: center; justify-content: space-between; margin-top: 4px; }
 .project-card__tags { display: flex; gap: 6px; flex-wrap: wrap; }

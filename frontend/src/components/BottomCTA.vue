@@ -21,7 +21,7 @@
 
 <style scoped>
 .cta {
-  padding: 100px 40px; background: var(--bg-navy);
+  padding: 80px 40px; background: var(--bg-navy);
   position: relative; overflow: hidden;
 }
 .cta::before {
@@ -37,7 +37,7 @@
 }
 .cta__title {
   font-size: clamp(32px, 4vw, 44px); font-weight: 700;
-  letter-spacing: -0.025em; color: var(--text-inverse); margin-bottom: 12px;
+  letter-spacing: -0.015em; color: var(--text-inverse); margin-bottom: 12px;
 }
 .cta__desc {
   font-size: 18px; color: rgba(255,255,255,0.55);

@@ -1,14 +1,14 @@
 <template>
   <section id="how-it-works" class="process">
     <div class="process__inner">
-      <div class="process__header">
+      <div class="process__header" v-scroll-in>
         <span class="section-label">工作流程</span>
         <h2 class="process__title">构建 · 测试 · 部署 · 监控</h2>
         <p class="process__subtitle">从知识库构建到课件生成，全流程 AI 驱动，一站式教学准备</p>
       </div>
 
       <div class="process__flow">
-        <div v-for="step in steps" :key="step.title" class="process-step">
+        <div v-for="(step, i) in steps" :key="step.title" class="process-step" v-scroll-in="{ delay: i * 100 }">
           <div class="process-step__icon">
             <component :is="step.icon" />
           </div>
@@ -75,16 +75,16 @@ const steps = [
 
 <style scoped>
 .process {
-  padding: 120px 40px; background: var(--bg-surface);
+  padding: 80px 40px; background: var(--bg-surface);
 }
 .process__inner {
   max-width: var(--max-width); margin: 0 auto; position: relative;
 }
 
-.process__header { text-align: center; margin-bottom: 72px; }
+.process__header { text-align: center; margin-bottom: 48px; }
 .process__title {
   font-size: clamp(32px, 4vw, 44px); font-weight: 700;
-  letter-spacing: -0.025em; color: var(--text-primary); margin-bottom: 12px;
+  letter-spacing: -0.015em; color: var(--text-primary); margin-bottom: 12px;
 }
 .process__subtitle {
   font-size: 17px; color: var(--text-secondary); max-width: 540px; margin: 0 auto;

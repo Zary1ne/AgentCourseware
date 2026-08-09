@@ -1,7 +1,7 @@
 <template>
   <section class="engine">
     <div class="engine__inner">
-      <div class="engine__text">
+      <div class="engine__text" v-scroll-in>
         <span class="section-label">核心引擎</span>
         <h2 class="engine__title">
           Teaching Agent Engine
@@ -117,7 +117,7 @@ const features = [
 
 <style scoped>
 .engine {
-  padding: 120px 40px; background: var(--bg-page);
+  padding: 80px 40px; background: var(--bg-page);
 }
 .engine__inner {
   max-width: var(--max-width); margin: 0 auto;
@@ -128,13 +128,13 @@ const features = [
 
 .engine__title {
   font-size: clamp(28px, 3.5vw, 42px); font-weight: 700;
-  letter-spacing: -0.025em; line-height: 1.18;
+  letter-spacing: -0.015em; line-height: 1.18;
   color: var(--text-primary); margin-bottom: 20px;
 }
 .engine__title-accent { color: var(--accent); }
 
 .engine__desc {
-  font-size: 16px; color: var(--text-secondary); line-height: 1.75;
+  font-size: 16px; color: var(--text-secondary); line-height: 1.65;
   margin-bottom: 36px;
 }
 

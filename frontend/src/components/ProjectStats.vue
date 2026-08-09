@@ -8,7 +8,7 @@
       </div>
 
       <div class="stats__grid">
-        <div v-for="card in cards" :key="card.label" class="stat-card">
+        <div v-for="(card, i) in cards" :key="card.label" :class="['stat-card', 'card-spotlight']" v-scroll-in="{ delay: i * 80 }" @mousemove="onCardMove($event, i)" ref="cardRefs">
           <div class="stat-card__top">
             <span class="stat-card__label">{{ card.label }}</span>
             <span v-if="card.status" class="stat-card__status">
@@ -30,12 +30,40 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, onUnmounted, getCurrentInstance } from 'vue'
 import { getKnowledgeDocuments, getAdminStats } from '../api'
 
 const docCount = ref(0)
 const docTypes = ref(0)
 const activeTasks = ref(0)
+const displayDocCount = ref(0)
+const displayDocTypes = ref(0)
+const displayActiveTasks = ref(0)
+const cardRefs = ref([])
+
+function onCardMove(e, i) {
+  const card = cardRefs.value?.[i]
+  if (!card) return
+  const rect = card.getBoundingClientRect()
+  card.style.setProperty('--mx', `${e.clientX - rect.left}px`)
+  card.style.setProperty('--my', `${e.clientY - rect.top}px`)
+}
+
+function animateNumber(from, target, duration, callback) {
+  const start = performance.now()
+  function frame(now) {
+    const elapsed = now - start
+    const progress = Math.min(elapsed / duration, 1)
+    const eased = 1 - Math.pow(1 - progress, 3)
+    callback(Math.round(from + (target - from) * eased))
+    if (progress < 1) requestAnimationFrame(frame)
+  }
+  requestAnimationFrame(frame)
+}
+
+let numObserver
+let animated = false
+const rootEl = getCurrentInstance()?.proxy?.$el
 
 onMounted(async () => {
   try {
@@ -46,22 +74,37 @@ onMounted(async () => {
     docTypes.value = docs.documents?.length ?? 0
     activeTasks.value = admin.active_sessions ?? admin.task_count ?? 0
   } catch {}
+
+  // Trigger number animation when section enters viewport
+  numObserver = new IntersectionObserver((entries) => {
+    entries.forEach(entry => {
+      if (entry.isIntersecting && !animated) {
+        animated = true
+        animateNumber(0, docCount.value, 1500, (v) => displayDocCount.value = v)
+        animateNumber(0, docTypes.value, 1500, (v) => displayDocTypes.value = v)
+        animateNumber(0, activeTasks.value, 1500, (v) => displayActiveTasks.value = v)
+      }
+    })
+  }, { threshold: 0.3 })
+  if (rootEl) numObserver.observe(rootEl)
 })
 
+onUnmounted(() => { if (numObserver) numObserver.disconnect() })
+
 const cards = [
-  { key:'docs', label:'知识文档', value:docCount, unit:'份已索引' },
-  { key:'types', label:'文档类型', value:docTypes, unit:'种来源格式' },
-  { key:'tasks', label:'活跃任务', value:activeTasks, unit:'个进行中' },
+  { key:'docs', label:'知识文档', value:displayDocCount, unit:'份已索引' },
+  { key:'types', label:'文档类型', value:displayDocTypes, unit:'种来源格式' },
+  { key:'tasks', label:'活跃任务', value:displayActiveTasks, unit:'个进行中' },
   { key:'status', label:'系统状态', value:'正常', unit:'', status:'运行中' },
 ]
 </script>
 
 <style scoped>
-.stats { padding: 100px 40px 120px; background: var(--bg-surface); }
+.stats { padding: 80px 40px; background: var(--bg-surface); }
 .stats__inner { max-width: var(--max-width); margin: 0 auto; }
 
-.stats__header { text-align: center; margin-bottom: 56px; }
-.stats__title { font-size: clamp(28px, 3.5vw, 40px); font-weight: 700; letter-spacing: -0.025em; color: var(--text-primary); margin-bottom: 10px; }
+.stats__header { text-align: center; margin-bottom: 48px; }
+.stats__title { font-size: clamp(28px, 3.5vw, 40px); font-weight: 700; letter-spacing: -0.015em; color: var(--text-primary); margin-bottom: 10px; }
 .stats__subtitle { font-size: 16px; color: var(--text-secondary); }
 
 .stats__grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 20px; }

@@ -551,21 +551,10 @@ onMounted(() => {
 
 <style scoped>
 .chat-panel {
-  --accent: #00D4AA;
-  --accent-hover: #00E8BA;
-  --accent-soft: rgba(0, 212, 170, 0.15);
-  --accent-glow: rgba(0, 212, 170, 0.35);
   --bg-panel: #0C0C16;
-  --bg-card: #141420;
-  --bg-raised: #1A1A28;
-  --border: rgba(255, 255, 255, 0.08);
-  --border-strong: rgba(255, 255, 255, 0.14);
-  --text-primary: #E8E8F0;
-  --text-secondary: #8E8EA0;
+  --bg-secondary: rgba(255, 255, 255, 0.04);
   --text-muted: #6A6A7C;
-  --success: #34D399;
-  --warning: #FBBF24;
-  --danger: #F87171;
+  --accent-soft: rgba(0, 212, 170, 0.15);
 
   position: relative;
   display: flex;

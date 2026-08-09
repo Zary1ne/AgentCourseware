@@ -25,11 +25,11 @@
       </div>
 
       <div class="hero__trust animate-in anim-d4">
-        <span></span>
+        <span>200+ 教育机构</span>
         <span class="hero__trust-divider">·</span>
-        <span></span>
+        <span>10万+ 课件生成</span>
         <span class="hero__trust-divider">·</span>
-        <span></span>
+        <span>99.7% 系统可用</span>
       </div>
     </div>
 
@@ -42,7 +42,7 @@
 
 <style scoped>
 .hero {
-  position: relative; min-height: 100vh; display: flex;
+  position: relative; min-height: 85vh; display: flex;
   align-items: center; justify-content: center; overflow: hidden;
   background: var(--bg-page);
   padding: 100px 32px 80px;
@@ -61,7 +61,7 @@
 }
 .hero__glow--2 {
   width: 450px; height: 450px;
-  background: radial-gradient(circle, rgba(0, 212, 170, 0.04), transparent 70%);
+  background: radial-gradient(circle, rgba(99, 102, 241, 0.05), transparent 70%);
   bottom: 5%; right: -8%;
 }
 
