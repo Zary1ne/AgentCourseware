@@ -12,7 +12,7 @@
       </router-link>
 
       <nav :class="['navbar__links', { 'navbar__links--open': mobileMenuOpen }]">
-        <a href="#" class="navbar__link">产品</a>
+        <a href="#featured" class="navbar__link" @click="closeMobile">开源社区</a>
         <a href="#" class="navbar__link">学习</a>
         <a href="#" class="navbar__link">文档</a>
         <a href="#" class="navbar__link">公司</a>
@@ -20,8 +20,23 @@
       </nav>
 
       <div class="navbar__actions">
-        <router-link to="/app" class="btn btn-primary btn-sm navbar__action-desktop">开始使用</router-link>
-        <a href="#contact" class="btn btn-secondary btn-sm navbar__action-desktop">预约演示</a>
+        <!-- 未登录 -->
+        <template v-if="!isLoggedIn">
+          <router-link to="/login" class="btn btn-primary btn-sm navbar__action-desktop">登录 / 注册</router-link>
+        </template>
+        <!-- 已登录用户 -->
+        <template v-else-if="isUser">
+          <a href="#featured" class="navbar__link navbar__action-desktop">开源社区</a>
+          <router-link to="/app" class="btn btn-primary btn-sm navbar__action-desktop">工作台</router-link>
+          <router-link to="/profile" class="navbar__avatar navbar__action-desktop" title="个人中心">
+            <span class="avatar-circle">{{ userInitial }}</span>
+          </router-link>
+        </template>
+        <!-- 管理员 -->
+        <template v-else-if="isAdmin">
+          <router-link to="/admin" class="btn btn-primary btn-sm navbar__action-desktop">管理后台</router-link>
+          <button class="btn btn-ghost btn-sm navbar__action-desktop" @click="logout">退出</button>
+        </template>
       </div>
 
       <button class="navbar__hamburger" @click="mobileMenuOpen = !mobileMenuOpen" aria-label="菜单">
@@ -34,12 +49,37 @@
 </template>
 
 <script setup>
-import { ref, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { useRouter, useRoute } from 'vue-router'
+
+const router = useRouter()
+const route = useRoute()
 const scrolled = ref(false)
 const mobileMenuOpen = ref(false)
+
 function onScroll() { scrolled.value = window.scrollY > 30 }
 onMounted(() => window.addEventListener('scroll', onScroll, { passive: true }))
 onUnmounted(() => window.removeEventListener('scroll', onScroll))
+
+const loginInfo = computed(() => {
+  try {
+    const info = sessionStorage.getItem('loginInfo')
+    return info ? JSON.parse(info) : null
+  } catch { return null }
+})
+
+const isLoggedIn = computed(() => !!loginInfo.value)
+const isUser = computed(() => loginInfo.value?.role === 'user')
+const isAdmin = computed(() => loginInfo.value?.role === 'admin')
+const userInitial = computed(() => (loginInfo.value?.username || 'U')[0].toUpperCase())
+
+function closeMobile() { mobileMenuOpen.value = false }
+
+function logout() {
+  sessionStorage.removeItem('loginInfo')
+  router.push('/')
+  if (route.path === '/admin') router.go(0)
+}
 </script>
 
 <style scoped>
@@ -79,6 +119,19 @@ onUnmounted(() => window.removeEventListener('scroll', onScroll))
   color: var(--text-primary); background: rgba(255,255,255,0.04);
 }
 .navbar__actions { display: flex; align-items: center; gap: 10px; }
+
+.navbar__avatar { display: flex; align-items: center; text-decoration: none; }
+.avatar-circle {
+  width: 36px; height: 36px; border-radius: 50%;
+  background: var(--accent-gradient);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 15px; font-weight: 700; color: #0A0A12;
+  cursor: pointer; transition: all var(--t-fast) var(--ease-out);
+}
+.avatar-circle:hover {
+  box-shadow: 0 0 0 2px rgba(0, 212, 170, 0.3);
+  transform: scale(1.05);
+}
 
 /* Hamburger button */
 .navbar__hamburger {

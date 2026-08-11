@@ -2,7 +2,7 @@
   <aside class="task-sidebar">
     <div class="task-sidebar__head">
       <span class="task-sidebar__title">任务列表</span>
-      <button class="task-sidebar__add" @click="createTask()" title="新建任务">
+      <button class="task-sidebar__add" @click="handleCreateTask()" title="新建任务">
         <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M8 3v10M3 8h10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
       </button>
     </div>
@@ -25,11 +25,27 @@
 </template>
 
 <script setup>
-import { ref } from 'vue'
+import { ref, nextTick } from 'vue'
 import { useTaskStore } from '../composables/useTaskStore'
 const { tasks, activeTaskId, switchTask, createTask, deleteTask, renameTask } = useTaskStore()
 const editingId = ref(null)
 const editName = ref('')
+
+function handleCreateTask() {
+  const t = createTask()  // 使用默认名称创建
+  // 立即进入重命名模式
+  editingId.value = t.id
+  editName.value = t.name
+  // 下一帧自动聚焦输入框
+  nextTick(() => {
+    const input = document.querySelector(`.task-item--active .task-item__input`)
+    if (input) {
+      input.focus()
+      input.select()
+    }
+  })
+}
+
 function startRename(t) { editingId.value = t.id; editName.value = t.name }
 function cancelRename() { editingId.value = null; editName.value = '' }
 function confirmRename(id) { if (editName.value.trim()) renameTask(id, editName.value.trim()); editingId.value = null; editName.value = '' }

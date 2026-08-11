@@ -69,3 +69,50 @@ export function reviseFile(fileType, filePath, instruction) { return api.post('/
 export function getDownloadUrl(filename) { return `/api/generate/download/${filename}` }
 
 export function getAdminStats() { return api.get('/admin/stats') }
+
+// ===== 认证相关 =====
+export function register(username, password) { return api.post('/auth/register', { username, password }) }
+export function login(username, password) { return api.post('/auth/login', { username, password }) }
+export function getUserInfo(userId) { return api.get(`/auth/user/${userId}`) }
+
+// ===== 开源社区 =====
+export function uploadCourseware(data) { return api.post('/community/upload', data) }
+export function getCommunityList(category = null) {
+  const params = category ? { category } : {}
+  return api.get('/community/list', { params })
+}
+export function getMyCourseware(userId) { return api.get(`/community/my/${userId}`) }
+
+// ===== 管理员审核 =====
+export function getPendingCourseware(status = 'pending') {
+  return api.get('/community/pending', { params: { status } })
+}
+export function reviewCourseware(cwId, approved, comment = '') {
+  return api.post('/community/review', { cw_id: cwId, approved, comment })
+}
+
+// ===== 通知系统 =====
+export function getNotifications(userId, unreadOnly = false) {
+  return api.get(`/notifications/${userId}`, { params: { unread_only: unreadOnly } })
+}
+export function markNotificationRead(nid) { return api.post(`/notifications/read/${nid}`) }
+export function markAllNotificationsRead(userId) { return api.post(`/notifications/read-all/${userId}`) }
+export function getUnreadCount(userId) { return api.get(`/notifications/unread-count/${userId}`) }
+
+// ===== 管理员用户管理 =====
+export function getAllUsers() { return api.get('/admin/users') }
+export function banUser(userId, reason) { return api.post('/admin/ban-user', { user_id: userId, reason }) }
+export function unbanUser(userId) { return api.post(`/admin/unban-user/${userId}`) }
+export function updateUser(userId, username, password) { return api.post('/admin/update-user', { user_id: userId, username, password }) }
+
+// ===== 课件文件 =====
+export function getCoursewareFileUrl(cwId) { return `/api/community/file/${cwId}` }
+
+// ===== 反馈系统 =====
+export function submitFeedback(data) { return api.post('/feedback/submit', data) }
+export function getFeedbackList(status = null) {
+  const params = status ? { status } : {}
+  return api.get('/feedback/list', { params })
+}
+export function getPendingFeedbackCount() { return api.get('/feedback/pending-count') }
+export function reviewFeedback(fbId, status, reply = '') { return api.post('/feedback/review', { fb_id: fbId, status, reply }) }

@@ -25,7 +25,7 @@
           <h4>产品</h4>
           <router-link to="/app">工作台</router-link>
           <a href="#stats">仪表盘</a>
-          <a href="#featured">案例展示</a>
+          <a href="#featured">开源社区</a>
           <a href="#how-it-works">工作流程</a>
         </div>
         <div class="footer__col">

@@ -2,7 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from app.config import HOST, PORT, OUTPUT_DIR
-from app.routers import chat, knowledge, generate, admin
+from app.routers import chat, knowledge, generate, admin, auth, community, notifications, feedback
 
 app = FastAPI(
     title="AI教学智能体 API",
@@ -24,6 +24,10 @@ app.include_router(chat.router)
 app.include_router(knowledge.router)
 app.include_router(generate.router)
 app.include_router(admin.router)
+app.include_router(auth.router)
+app.include_router(community.router)
+app.include_router(notifications.router)
+app.include_router(feedback.router)
 
 # 静态文件服务（生成的文件下载）
 app.mount("/outputs", StaticFiles(directory=OUTPUT_DIR), name="outputs")

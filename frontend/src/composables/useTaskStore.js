@@ -1,6 +1,23 @@
 import { ref, computed, watch } from 'vue'
 
-const STORAGE_KEY = 'teaching_agent_tasks'
+const STORAGE_PREFIX = 'teaching_agent_tasks'
+
+function getStorageKey() {
+  try {
+    const info = sessionStorage.getItem('loginInfo')
+    if (!info) return STORAGE_PREFIX + '_anonymous'
+    const loginInfo = JSON.parse(info)
+    return STORAGE_PREFIX + '_' + (loginInfo.userId || loginInfo.username || 'anonymous')
+  } catch { return STORAGE_PREFIX + '_anonymous' }
+}
+
+function getCurrentUserId() {
+  try {
+    const info = sessionStorage.getItem('loginInfo')
+    if (!info) return ''
+    return JSON.parse(info).userId || ''
+  } catch { return '' }
+}
 
 function makeTask(name = '') {
   return {
@@ -20,13 +37,17 @@ const currentStep = ref(0)
 
 function loadTasks() {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY)
+    const key = getStorageKey()
+    const raw = localStorage.getItem(key)
     if (raw) { const data = JSON.parse(raw); tasks.value = data.tasks || []; activeTaskId.value = data.activeTaskId || null }
   } catch {}
 }
 
 function saveTasks() {
-  try { localStorage.setItem(STORAGE_KEY, JSON.stringify({ tasks: tasks.value, activeTaskId: activeTaskId.value })) } catch {}
+  try {
+    const key = getStorageKey()
+    localStorage.setItem(key, JSON.stringify({ tasks: tasks.value, activeTaskId: activeTaskId.value }))
+  } catch {}
 }
 
 loadTasks()
@@ -53,5 +74,5 @@ function setStep(n) { if (n >= 0 && n <= 2) currentStep.value = n }
 watch(tasks, saveTasks, { deep: true })
 
 export function useTaskStore() {
-  return { tasks, activeTaskId, activeTask, currentStep, setStep, createTask, switchTask, deleteTask, renameTask }
+  return { tasks, activeTaskId, activeTask, currentStep, setStep, createTask, switchTask, deleteTask, renameTask, getCurrentUserId }
 }

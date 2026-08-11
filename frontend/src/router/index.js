@@ -5,6 +5,7 @@ const routes = [
   { path: '/login', name: 'Login', component: () => import('../pages/LoginPage.vue') },
   { path: '/home', name: 'UserHome', component: () => import('../pages/HomePage.vue'), meta: { requiresAuth: true, role: 'user' } },
   { path: '/app', name: 'Workspace', component: () => import('../pages/Workspace.vue'), meta: { requiresAuth: true, role: 'user' } },
+  { path: '/profile', name: 'Profile', component: () => import('../pages/ProfilePage.vue'), meta: { requiresAuth: true, role: 'user' } },
   { path: '/admin', name: 'Admin', component: () => import('../pages/AdminDashboard.vue'), meta: { requiresAuth: true, role: 'admin' } },
 ]
 
