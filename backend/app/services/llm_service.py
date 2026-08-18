@@ -1,11 +1,17 @@
-from openai import OpenAI
+from openai import OpenAI, AsyncOpenAI
 from app.config import LLM_API_KEY, LLM_BASE_URL, LLM_MODEL
 from typing import List, Dict, AsyncGenerator
 import json
 import asyncio
 
-# 初始化 OpenAI 兼容客户端
-client = OpenAI(
+# 同步客户端（用于 chat_sync、extract_intent 等同步调用）
+sync_client = OpenAI(
+    api_key=LLM_API_KEY,
+    base_url=LLM_BASE_URL,
+)
+
+# 异步客户端（用于 chat_stream 流式传输，不阻塞事件循环）
+client = AsyncOpenAI(
     api_key=LLM_API_KEY,
     base_url=LLM_BASE_URL,
 )
@@ -184,8 +190,12 @@ def select_system_prompt(history: List[Dict], prompt_type: str = "") -> str:
 
 # ===== 工具函数（来自 AITEACH(对话) 原型） =====
 def clean_response(text: str) -> str:
-    """移除星号格式标记"""
-    return text.replace("*", "")
+    """保留原始回复内容
+
+    前端已改为 Markdown 渲染（marked + KaTeX + highlight.js），
+    星号等格式标记是合法语法，不再移除。
+    """
+    return text
 
 
 def is_teaching_request(text: str) -> bool:
@@ -202,17 +212,66 @@ def fallback_response(text: str) -> str:
     t = text.strip()
     if any(g in t for g in ["你好", "hello", "hi", "喂", "在吗", "在不在"]) or len(t) < 3:
         return "你好！我是 AI 教学助手，请告诉我您想准备的学科和知识点，我来帮您设计教学方案～"
+    # 物理/公式类问题：输出 LaTeX 公式 + 示例代码，用于验证公式渲染与代码高亮
+    if any(g in t for g in ["物理", "公式", "牛顿", "力学", "F=ma", "f=ma", "加速度"]):
+        return ("好的，我们以**牛顿第二定律**为例进行讲解：\n\n"
+                "## 核心公式\n\n物体所受合外力与加速度成正比：$F = ma$\n\n"
+                "动能定理的微分形式：$dW = \\vec{F} \\cdot d\\vec{s}$\n\n"
+                "## Python 演示代码\n\n"
+                "```python\n"
+                "def compute_force(mass, accel):\n"
+                "    \"\"\"根据牛顿第二定律 F = ma 计算合外力\"\"\"\n"
+                "    return mass * accel\n"
+                "\n"
+                "print(compute_force(2.0, 3.5))  # 输出: 7.0\n"
+                "```\n\n"
+                "**教学要点**：\n"
+                "1. 强调 $F$ 是*合外力*，不是单个力\n"
+                "2. 单位统一使用国际单位制（N、kg、m/s²）\n"
+                "3. 通过实验让学生直观感受 $a \\propto F$ 的关系\n\n"
+                "[当前 AI 服务暂时不可用，以上为示例教学回复]")
+    # 编程类问题：输出示例代码块
+    if any(g in t for g in ["代码", "python", "编程", "程序", "算法"]):
+        return ("好的，这里给出一个**Python 示例**：\n\n"
+                "```python\n"
+                "def fibonacci(n):\n"
+                "    \"\"\"生成斐波那契数列前 n 项\"\"\"\n"
+                "    seq = [0, 1]\n"
+                "    while len(seq) < n:\n"
+                "        seq.append(seq[-1] + seq[-2])\n"
+                "    return seq[:n]\n"
+                "\n"
+                "print(fibonacci(10))  # [0, 1, 1, 2, 3, 5, 8, 13, 21, 34]\n"
+                "```\n\n"
+                "**说明**：时间复杂度为 $O(n)$，空间复杂度为 $O(n)$。\n\n"
+                "[当前 AI 服务暂时不可用，以上为示例教学回复]")
     return ("这是一个很好的教学主题。建议从以下方面入手：\n\n"
-            "1. 明确本课时的教学目标，让学生知道学完能做什么\n"
-            "2. 梳理核心知识点和重难点，设计突破策略\n"
-            "3. 准备课堂活动或实验，帮助学生理解抽象概念\n"
-            "4. 设计分层练习，检验学习效果\n\n"
+            "1. **明确教学目标**：让学生知道学完能做什么\n"
+            "2. **梳理重难点**：围绕核心知识点设计突破策略\n"
+            "3. **课堂活动**：准备实验或互动，帮助理解抽象概念\n"
+            "4. **分层练习**：设计不同难度的题目检验学习效果\n\n"
             "[当前 AI 服务暂时不可用，以上为基础建议]")
 
 
 def build_messages(history: List[Dict], system_prompt: str = SYSTEM_PROMPT) -> List[Dict]:
     """构建消息列表"""
     return [{"role": "system", "content": system_prompt}] + history
+
+
+def _stream_text_chunks(text: str):
+    """把文本切成流式块，但不要把 LaTeX 命令（\\command）从中间断开"""
+    i = 0
+    n = len(text)
+    while i < n:
+        if text[i] == "\\" and i + 1 < n and text[i + 1].isalpha():
+            j = i + 1
+            while j < n and text[j].isalpha():
+                j += 1
+            yield text[i:j]
+            i = j
+        else:
+            yield text[i]
+            i += 1
 
 
 async def chat_stream(history: List[Dict], prompt_type: str = "") -> AsyncGenerator[str, None]:
@@ -224,25 +283,25 @@ async def chat_stream(history: List[Dict], prompt_type: str = "") -> AsyncGenera
     system_prompt = select_system_prompt(history, prompt_type)
     messages = build_messages(history, system_prompt)
 
-    # 第一层：直接调用 OpenAI
+    # 第一层：异步流式调用 OpenAI
     try:
-        response = client.chat.completions.create(
+        response = await client.chat.completions.create(
             model=LLM_MODEL,
             messages=messages,
             stream=True,
             temperature=0.7,
             max_tokens=4096,
         )
-        for chunk in response:
+        async for chunk in response:
             if chunk.choices[0].delta.content:
                 yield clean_response(chunk.choices[0].delta.content)
         return
     except Exception as e:
         pass  # 降级到下一层
 
-    # 第二层：重试一次（不带 stream，但分块输出模拟流式）
+    # 第二层：异步重试（不带 stream，分块输出模拟流式）
     try:
-        response = client.chat.completions.create(
+        response = await client.chat.completions.create(
             model=LLM_MODEL,
             messages=messages,
             temperature=0.7,
@@ -250,19 +309,18 @@ async def chat_stream(history: List[Dict], prompt_type: str = "") -> AsyncGenera
         )
         content = response.choices[0].message.content
         cleaned = clean_response(content)
-        # 按字符分块输出，模拟流式效果
-        chunk_size = 2
-        for i in range(0, len(cleaned), chunk_size):
-            yield cleaned[i:i+chunk_size]
+        for chunk in _stream_text_chunks(cleaned):
+            yield chunk
+            await asyncio.sleep(0.01)
         return
     except Exception as e:
         pass  # 降级到下一层
 
     # 第三层：硬编码兜底，分块输出
     fallback = clean_response(fallback_response(last_user_text))
-    chunk_size = 2
-    for i in range(0, len(fallback), chunk_size):
-        yield fallback[i:i+chunk_size]
+    for chunk in _stream_text_chunks(fallback):
+        yield chunk
+        await asyncio.sleep(0.01)
 
 
 def chat_sync(history: List[Dict], prompt_type: str = "") -> str:
@@ -274,7 +332,7 @@ def chat_sync(history: List[Dict], prompt_type: str = "") -> str:
     messages = build_messages(history, system_prompt)
 
     try:
-        response = client.chat.completions.create(
+        response = sync_client.chat.completions.create(
             model=LLM_MODEL,
             messages=messages,
             temperature=0.7,
@@ -313,7 +371,7 @@ def extract_intent(history: List[Dict]) -> dict:
 }"""
 
     messages = history + [{"role": "user", "content": prompt}]
-    response = client.chat.completions.create(
+    response = sync_client.chat.completions.create(
         model=LLM_MODEL,
         messages=messages,
         temperature=0.3,
@@ -362,7 +420,7 @@ def generate_content(prompt: str, context: str = "", student_profile: dict = Non
         {"role": "system", "content": system_content},
         {"role": "user", "content": f"参考资料：\n{context}\n\n生成要求：\n{prompt}"} if context else {"role": "user", "content": prompt}
     ]
-    response = client.chat.completions.create(
+    response = sync_client.chat.completions.create(
         model=LLM_MODEL,
         messages=messages,
         temperature=0.7,

@@ -183,21 +183,11 @@ async def send_message(request: ChatRequest):
                 yield {"event": "intents", "data": json.dumps(keyword_intents, ensure_ascii=False)}
 
             full_response = ""
-            buffer = ""
-            flush_interval = 0.05
-            last_flush = time.monotonic()
 
             try:
                 async for chunk in chat_stream(history, request.prompt_type):
                     full_response += chunk
-                    buffer += chunk
-                    now = time.monotonic()
-                    if now - last_flush >= flush_interval or len(buffer) >= 50:
-                        yield {"event": "message", "data": buffer}
-                        buffer = ""
-                        last_flush = now
-                if buffer:
-                    yield {"event": "message", "data": buffer}
+                    yield {"event": "message", "data": chunk}
             except Exception:
                 fallback = generate_ai_response(last_user_text, keyword_intents)
                 full_response = clean_response(fallback)

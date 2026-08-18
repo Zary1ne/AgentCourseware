@@ -1,4 +1,4 @@
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, triggerRef } from 'vue'
 
 const STORAGE_PREFIX = 'teaching_agent_tasks'
 
@@ -73,6 +73,10 @@ function setStep(n) { if (n >= 0 && n <= 2) currentStep.value = n }
 
 watch(tasks, saveTasks, { deep: true })
 
+function triggerTaskUpdate() {
+  triggerRef(tasks)
+}
+
 export function useTaskStore() {
-  return { tasks, activeTaskId, activeTask, currentStep, setStep, createTask, switchTask, deleteTask, renameTask, getCurrentUserId }
+  return { tasks, activeTaskId, activeTask, currentStep, setStep, createTask, switchTask, deleteTask, renameTask, getCurrentUserId, triggerTaskUpdate }
 }

@@ -25,7 +25,7 @@
 </template>
 
 <script setup>
-import { ref, computed } from 'vue'
+import { ref, computed, reactive, triggerRef } from 'vue'
 import { useTaskStore } from '../composables/useTaskStore'
 import TaskSidebar from '../components/TaskSidebar.vue'
 import KnowledgePanel from '../components/KnowledgePanel.vue'
@@ -33,10 +33,13 @@ import ChatPanel from '../components/ChatPanel.vue'
 import PreviewPanel from '../components/PreviewPanel.vue'
 import { sendMessage, extractIntent, generateAll } from '../api'
 
-const { activeTask, currentStep, setStep } = useTaskStore()
+const { activeTask, currentStep, setStep, triggerTaskUpdate } = useTaskStore()
 const chatLoading = ref(false)
 const genLoading = ref(false)
 let abortController = null
+
+// 用于强制触发消息列表更新
+const messageTick = ref(0)
 
 const fileCount = computed(() => Object.keys(activeTask.value.genFiles).length)
 
@@ -275,7 +278,9 @@ async function onSendMessage(text, promptType = '') {
   try {
     const response = await sendMessage(activeTask.value.messages.map(m=>({role:m.role,content:m.content})), true, abortController.signal, promptType)
     if (!response.ok) throw new Error('请求失败')
-    const assistantMsg = { role:'assistant', content:'', _id: Date.now() + '_ai' }; activeTask.value.messages.push(assistantMsg)
+    // 用 reactive 创建：push 后本地变量与数组内是同一个代理，
+    // 后续 content += 才能触发视图更新（否则流式期间界面不刷新，结束时一次性弹出）
+    const assistantMsg = reactive({ role:'assistant', content:'', _id: Date.now() + '_ai' }); activeTask.value.messages.push(assistantMsg)
     const reader = response.body.getReader(); const decoder = new TextDecoder()
     let buffer = ''
     let eventDataLines = []
@@ -287,48 +292,44 @@ async function onSendMessage(text, promptType = '') {
       if (eventDataLines.length === 0) return
       const dataStr = eventDataLines.join('\n')
       eventDataLines = []
-      if (dataStr === '[DONE]' || dataStr === '"[DONE]"') return
       if (eventType === 'intents') {
         try { activeTask.value.intent = JSON.parse(dataStr) } catch {}
         return
       }
-      // 如果已检测到 [INTENT_READY]，后续不再追加内容
+      if (eventType === 'done' || dataStr === '[DONE]') return
       if (intentReadyFlag) return
-      // 尝试解析为 JSON（后端以 JSON 字符串方式发送每个块）
-      try {
-        const p = JSON.parse(dataStr)
-        let textChunk = ''
-        if (typeof p === 'string') {
-          if (p === '[DONE]') return
-          textChunk = p
-        } else if (typeof p === 'object' && p !== null) {
-          if (p.subject || p.topic) { activeTask.value.intent = p; return }
-          if (typeof p.content === 'string') textChunk = p.content
-          else return
-        }
-        // 实时清理：移除 [INTENT_READY] 标记及之后的 JSON 意图块
-        if (textChunk.includes('[INTENT_READY]')) {
-          intentReadyFlag = true
-          const idx = textChunk.indexOf('[INTENT_READY]')
-          textChunk = textChunk.slice(0, idx)
-        }
-        if (textChunk) assistantMsg.content += textChunk
-      } catch {
-        let textChunk = dataStr
-        if (textChunk !== '[DONE]') {
-          if (textChunk.includes('[INTENT_READY]')) {
-            intentReadyFlag = true
-            const idx = textChunk.indexOf('[INTENT_READY]')
-            textChunk = textChunk.slice(0, idx)
-          }
-          if (textChunk) assistantMsg.content += textChunk
-        }
+
+      // sse_starlette 输出格式：
+      // - message 事件 data 是纯文本（后端 yield {"data": chunk}，chunk 已是字符串）
+      // - intents/intent 事件 data 是 JSON 字符串
+      // - done 事件 data 是 "[DONE]"
+      let textChunk = ''
+      if (eventType === 'message') {
+        // 直接作为文本追加，sse_starlette 不做 JSON 编码
+        textChunk = dataStr
+      } else if (eventType === 'intent') {
+        try { activeTask.value.intent = JSON.parse(dataStr) } catch {}
+        return
+      } else {
+        textChunk = dataStr
+      }
+
+      if (textChunk.includes('[INTENT_READY]')) {
+        intentReadyFlag = true
+        textChunk = textChunk.slice(0, textChunk.indexOf('[INTENT_READY]'))
+      }
+
+      if (textChunk) {
+        assistantMsg.content += textChunk
+        triggerTaskUpdate()
       }
     }
 
     while (true) {
       const { done, value } = await reader.read(); if (done) break
       buffer += decoder.decode(value, { stream:true })
+      // sse_starlette uses \r\n (CRLF) as separator, normalize to \n first
+      buffer = buffer.replace(/\r\n/g, '\n')
       const parts = buffer.split('\n')
       buffer = parts.pop() || ''
       for (const line of parts) {

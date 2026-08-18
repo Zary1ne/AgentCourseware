@@ -90,8 +90,17 @@
         <div class="msg-body">
           <div class="msg-content">
             <template v-for="(block, bi) in parseContent(m.content)" :key="bi">
-              <!-- 文本块 -->
-              <div v-if="block.type === 'text'" class="msg-text-block">{{ block.text }}</div>
+              <!-- 文本块：AI 回复用 Markdown 渲染（公式/代码/格式），用户消息保持纯文本 -->
+              <div
+                v-if="block.type === 'text'"
+                :class="['msg-text-block', m.role === 'assistant' ? 'msg-md' : 'msg-plain']"
+              >
+                <template v-if="m.role === 'assistant'">
+                  <!-- eslint-disable-next-line vue/no-v-html -->
+                  <span class="md-body" v-html="renderMarkdown(block.text)" />
+                </template>
+                <template v-else>{{ block.text }}</template>
+              </div>
               <!-- 选择题（只显示第一个未回答的） -->
               <div
                 v-else-if="block.type === 'choice'"
@@ -226,6 +235,9 @@
 import { ref, nextTick, watch, onMounted, computed, reactive } from 'vue'
 
 import { exportDocument } from '../api'
+import { renderMarkdown } from '../utils/markdown'
+import 'highlight.js/styles/github-dark.css'
+import 'katex/dist/katex.min.css'
 
 const props = defineProps({
   messages: { type: Array, default: () => [] },
@@ -344,7 +356,8 @@ function getExportType(aiMsgIndex) {
 function parseContent(c) {
   if (!c) return [{ type: 'text', text: '' }]
   // 将字面 \n 转换为真正的换行符（处理 SSE 传输中可能的转义问题）
-  let content = c.replace(/\\r\\n/g, '\n').replace(/\\n/g, '\n')
+  // 后面跟字母的不替换，避免破坏 LaTeX 命令（如 \neq、\nu、\nabla）
+  let content = c.replace(/\\r\\n(?![a-zA-Z])/g, '\n').replace(/\\n(?![a-zA-Z])/g, '\n')
   const blocks = []
   const regex = /\{\{(CHOICE|INPUT):([^}]+)\}\}/g
   let lastIdx = 0
@@ -531,14 +544,17 @@ function onScroll() {
 }
 
 // ---- 自动滚到底部 ----
+// 新消息出现：平滑滚到底
 watch(() => props.messages.length, () => nextTick(() => bottomRef.value?.scrollIntoView({ behavior: 'smooth' })))
-watch(() => props.loading, (v) => { if (v) nextTick(() => bottomRef.value?.scrollIntoView({ behavior: 'smooth' })) })
+// 加载开始和结束都滚到底：回复完成后保证视图停在最新回复的末尾
+watch(() => props.loading, () => { nextTick(() => bottomRef.value?.scrollIntoView({ behavior: 'smooth' })) })
 watch(() => props.messages, () => {
-  // 内容流式增长时也跟随滚到底（仅当用户已在底部附近）
+  // 内容流式增长时实时跟随滚到底（仅当用户已在底部附近）
+  // 用即时滚动（scrollTop 直赋值）避免平滑动画被高频流式更新打断导致跟不住底部
   const c = msgContainer.value
   if (!c) return
-  const nearBottom = c.scrollHeight - c.scrollTop - c.clientHeight < 120
-  if (nearBottom) nextTick(() => bottomRef.value?.scrollIntoView({ behavior: 'smooth' }))
+  const nearBottom = c.scrollHeight - c.scrollTop - c.clientHeight < 160
+  if (nearBottom) nextTick(() => { const el = msgContainer.value; if (el) el.scrollTop = el.scrollHeight })
 }, { deep: true })
 
 onMounted(() => {
@@ -658,10 +674,110 @@ onMounted(() => {
   overflow-wrap: break-word;
   letter-spacing: 0.02em;
 }
-.msg-content .msg-text-block {
+/* 用户消息：纯文本，保留换行 */
+.msg-content .msg-text-block.msg-plain {
   white-space: pre-line;
 }
-.msg-content :deep(br) { display: block; }
+/* AI 消息：Markdown 渲染 */
+.msg-content .msg-text-block.msg-md {
+  white-space: normal;
+}
+
+/* ---- Markdown 正文排版 ---- */
+.md-body > :first-child { margin-top: 0; }
+.md-body > :last-child { margin-bottom: 0; }
+.md-body :deep(p) { margin: 0 0 8px; }
+.md-body :deep(h1), .md-body :deep(h2), .md-body :deep(h3),
+.md-body :deep(h4), .md-body :deep(h5), .md-body :deep(h6) {
+  margin: 14px 0 8px; font-weight: 700; color: var(--text-primary);
+  line-height: 1.4;
+}
+.md-body :deep(h1) { font-size: 1.3em; border-bottom: 1px solid var(--border); padding-bottom: 4px; }
+.md-body :deep(h2) { font-size: 1.18em; }
+.md-body :deep(h3) { font-size: 1.06em; }
+.md-body :deep(h4), .md-body :deep(h5), .md-body :deep(h6) { font-size: 1em; }
+.md-body :deep(ul), .md-body :deep(ol) {
+  margin: 0 0 8px; padding-left: 1.4em;
+}
+.md-body :deep(li) { margin: 2px 0; }
+.md-body :deep(li > ul), .md-body :deep(li > ol) { margin: 2px 0; }
+.md-body :deep(a) { color: var(--accent); text-decoration: none; }
+.md-body :deep(a:hover) { text-decoration: underline; }
+.md-body :deep(blockquote) {
+  margin: 8px 0; padding: 6px 12px;
+  border-left: 3px solid var(--accent);
+  background: var(--bg-secondary, rgba(255, 255, 255, 0.04));
+  border-radius: 0 8px 8px 0;
+  color: var(--text-secondary);
+}
+.md-body :deep(hr) { border: none; border-top: 1px solid var(--border); margin: 12px 0; }
+.md-body :deep(strong) { color: var(--text-primary); font-weight: 700; }
+
+/* 行内代码 */
+.md-body :deep(code:not(.hljs)) {
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 1px 6px;
+  font-size: 0.9em;
+  font-family: 'Cascadia Code', Consolas, 'Courier New', monospace;
+  color: #7ee1c8;
+}
+
+/* 代码块（highlight.js 主题提供配色，这里控制布局） */
+.md-body :deep(pre) {
+  margin: 10px 0;
+  padding: 12px 14px;
+  border-radius: 10px;
+  overflow-x: auto;
+  background: #0d1117;
+  border: 1px solid var(--border);
+  line-height: 1.5;
+}
+.md-body :deep(pre code) {
+  display: block;
+  background: transparent;
+  border: none;
+  padding: 0;
+  font-size: 13px;
+  font-family: 'Cascadia Code', Consolas, 'Courier New', monospace;
+  color: inherit;
+  white-space: pre;
+}
+
+/* 表格 */
+.md-body :deep(table) {
+  border-collapse: collapse;
+  margin: 10px 0;
+  width: 100%;
+  font-size: 13px;
+  display: block;
+  overflow-x: auto;
+}
+.md-body :deep(th), .md-body :deep(td) {
+  border: 1px solid var(--border);
+  padding: 6px 12px;
+  text-align: left;
+}
+.md-body :deep(th) {
+  background: var(--bg-secondary, rgba(255, 255, 255, 0.06));
+  font-weight: 600;
+  color: var(--text-primary);
+  white-space: nowrap;
+}
+.md-body :deep(tr:nth-child(2n) td) {
+  background: var(--bg-secondary, rgba(255, 255, 255, 0.03));
+}
+
+/* KaTeX 公式 */
+.md-body :deep(.katex) { font-size: 1.05em; }
+.md-body :deep(.katex-display) {
+  margin: 10px 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 4px 0;
+}
+.msg-content :deep(br) { display: inline; }
 .msg-content [style*="letter-spacing"] { letter-spacing: normal !important; }
 
 /* 交互组件样式 */
