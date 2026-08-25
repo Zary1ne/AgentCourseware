@@ -15,6 +15,13 @@ vector_store/
 node_modules/
 frontend/node_modules/
 
+# 前端构建产物（每次 build 都会变 hash，污染历史，不上传）
+frontend/dist/
+dist/
+
+# WorkBuddy 会话记录
+.workbuddy/
+
 # 知识库
 knowledge_base/
 

@@ -138,58 +138,71 @@ function switchMode(m) {
   confirmPassword.value = ''
 }
 
+function getErrorMessage(e) {
+  // axios 响应错误
+  if (e?.response?.data?.detail) {
+    const d = e.response.data.detail
+    if (typeof d === 'string') return d
+    if (d?.ban_reason) return d.ban_reason
+  }
+  // 网络/CORS/超时
+  if (e?.code === 'ECONNABORTED' || e?.message?.includes('timeout')) return '请求超时，请检查网络或刷新页面重试'
+  if (e?.message?.includes('Network Error')) return '网络错误，请确认后端服务已启动（start.bat）'
+  if (e?.message) return e.message
+  return '操作失败，请稍后重试'
+}
+
 async function handleSubmit() {
   error.value = ''
   successMsg.value = ''
 
   // 基本验证
-  if (!username.value.trim()) { error.value = '请输入用户名'; return }
-  if (username.value.trim().length < 2) { error.value = '用户名至少需要2个字符'; return }
+  const name = username.value.trim()
+  if (!name) { error.value = '请输入用户名'; return }
+  if (name.length < 2) { error.value = '用户名至少需要2个字符'; return }
   if (!password.value) { error.value = '请输入密码'; return }
   if (password.value.length < 3) { error.value = '密码至少需要3个字符'; return }
 
   if (mode.value === 'register') {
     if (password.value !== confirmPassword.value) { error.value = '两次输入的密码不一致'; return }
+  }
 
-    loading.value = true
-    try {
-      const res = await register(username.value.trim(), password.value)
-      const user = res.data.user
-      // 注册成功后自动登录
-      sessionStorage.setItem('loginInfo', JSON.stringify({ role: user.role, username: user.username, userId: user.id }))
-      successMsg.value = '注册成功，正在跳转...'
-      setTimeout(() => router.push('/home'), 800)
-    } catch (e) {
-      error.value = e.response?.data?.detail || '注册失败，请稍后重试'
-    } finally {
-      loading.value = false
+  loading.value = true
+  // 10 秒超时：避免请求“假死”导致按钮一直转圈
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), 10000)
+
+  try {
+    let res
+    if (mode.value === 'register') {
+      res = await register(name, password.value, controller.signal)
+    } else {
+      res = await login(name, password.value, controller.signal)
     }
-  } else {
-    // 登录
-    loading.value = true
-    try {
-      const res = await login(username.value.trim(), password.value)
-      const user = res.data.user
-      sessionStorage.setItem('loginInfo', JSON.stringify({ role: user.role, username: user.username, userId: user.id }))
-      router.push('/home')
-    } catch (e) {
-      // 检查是否是因为账户被封禁
-      if (e.response?.status === 403) {
-        const detail = e.response?.data?.detail
-        if (typeof detail === 'object' && detail.reason === 'account_banned') {
-          bannedInfo.value = {
-            username: username.value.trim(),
-            ban_reason: detail.ban_reason || '您的账户已被管理员封禁',
-            banned_at: detail.banned_at || '',
-            admin_email: detail.admin_email || 'admin@teaching-agent.ai',
-          }
-          return
+    clearTimeout(timer)
+    const user = res.data.user
+    sessionStorage.setItem('loginInfo', JSON.stringify({ role: user.role, username: user.username, userId: user.id }))
+    successMsg.value = mode.value === 'register' ? '注册成功，正在跳转...' : '登录成功，正在跳转...'
+    setTimeout(() => router.push('/home'), 500)
+  } catch (e) {
+    clearTimeout(timer)
+    // 检查是否是因为账户被封禁
+    if (e?.response?.status === 403) {
+      const detail = e.response?.data?.detail
+      if (typeof detail === 'object' && detail?.reason === 'account_banned') {
+        bannedInfo.value = {
+          username: name,
+          ban_reason: detail.ban_reason || '您的账户已被管理员封禁',
+          banned_at: detail.banned_at || '',
+          admin_email: detail.admin_email || 'admin@teaching-agent.ai',
         }
+        loading.value = false
+        return
       }
-      error.value = typeof e.response?.data?.detail === 'string' ? e.response.data.detail : '登录失败，请稍后重试'
-    } finally {
-      loading.value = false
     }
+    error.value = getErrorMessage(e)
+  } finally {
+    loading.value = false
   }
 }
 

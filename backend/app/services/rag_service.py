@@ -1,124 +1,17 @@
 import os
 import json
 import re
-import numpy as np
 from typing import List
 from app.config import KNOWLEDGE_BASE_DIR
 from app.services.file_parser import parse_file
+from app.services.chroma_store import (
+    _get_collection,
+    _where_task,
+    _tokenize,
+)
 
-# 向量存储文件路径
-VECTOR_STORE_PATH = os.path.join(os.path.dirname(KNOWLEDGE_BASE_DIR), "backend", "vector_store")
-
-# 全局状态
-_documents = []      # 文档元数据和内容
-_embeddings = None   # numpy 向量矩阵
-_vocab = {}          # 词汇表 (用于简单向量化)
-_vocab_size = 0
-
-
-def _load_vector_store():
-    """加载持久化的向量存储"""
-    global _documents, _embeddings, _vocab, _vocab_size
-    try:
-        data_path = os.path.join(VECTOR_STORE_PATH, "store.json")
-        vec_path = os.path.join(VECTOR_STORE_PATH, "embeddings.npy")
-        if os.path.exists(data_path) and os.path.exists(vec_path):
-            with open(data_path, "r", encoding="utf-8") as f:
-                data = json.load(f)
-                _documents = data.get("documents", [])
-                _vocab = data.get("vocab", {})
-                _vocab_size = data.get("vocab_size", 0)
-            _embeddings = np.load(vec_path)
-    except Exception:
-        _documents = []
-        _embeddings = None
-        _vocab = {}
-        _vocab_size = 0
-
-
-def _save_vector_store():
-    """持久化向量存储"""
-    try:
-        os.makedirs(VECTOR_STORE_PATH, exist_ok=True)
-        data = {
-            "documents": _documents,
-            "vocab": _vocab,
-            "vocab_size": _vocab_size,
-        }
-        with open(os.path.join(VECTOR_STORE_PATH, "store.json"), "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
-        if _embeddings is not None:
-            np.save(os.path.join(VECTOR_STORE_PATH, "embeddings.npy"), _embeddings)
-    except Exception as e:
-        print(f"Failed to save vector store: {e}")
-
-
-def _build_vocab(texts: List[str], min_df: int = 2):
-    """构建词汇表"""
-    global _vocab, _vocab_size
-    doc_freq = {}
-    for text in texts:
-        tokens = set(_tokenize(text))
-        for token in tokens:
-            doc_freq[token] = doc_freq.get(token, 0) + 1
-
-    # 过滤低频词
-    vocab_tokens = [t for t, f in doc_freq.items() if f >= min_df]
-    _vocab = {token: i for i, token in enumerate(vocab_tokens)}
-    _vocab_size = len(_vocab)
-
-
-def _tokenize(text: str) -> List[str]:
-    """简单的中文+英文分词"""
-    # 中文：按字符切分，英文：按空格切分
-    tokens = []
-    # 提取中文字符
-    chinese = re.findall(r'[一-鿿]', text)
-    tokens.extend(chinese)
-    # 提取英文单词
-    english = re.findall(r'[a-zA-Z]+', text.lower())
-    tokens.extend(english)
-    # 提取数字
-    numbers = re.findall(r'\d+', text)
-    tokens.extend(numbers)
-    return tokens
-
-
-def _text_to_vector(text: str) -> np.ndarray:
-    """将文本转为 TF-IDF 风格的向量"""
-    if _vocab_size == 0:
-        return np.zeros(384, dtype=np.float32)
-
-    tokens = _tokenize(text)
-    vec = np.zeros(_vocab_size, dtype=np.float32)
-
-    if not tokens:
-        return vec
-
-    # TF 统计
-    tf = {}
-    for token in tokens:
-        if token in _vocab:
-            idx = _vocab[token]
-            tf[idx] = tf.get(idx, 0) + 1
-
-    # 归一化
-    total = len(tokens) or 1
-    for idx, count in tf.items():
-        vec[idx] = count / total
-
-    return vec
-
-
-def _cosine_similarity(query_vec: np.ndarray, doc_vecs: np.ndarray) -> np.ndarray:
-    """计算余弦相似度"""
-    q_norm = np.linalg.norm(query_vec)
-    if q_norm == 0:
-        return np.zeros(doc_vecs.shape[0])
-    d_norms = np.linalg.norm(doc_vecs, axis=1)
-    d_norms[d_norms == 0] = 1
-    dots = np.dot(doc_vecs, query_vec)
-    return dots / (q_norm * d_norms)
+# 旧向量存储路径（用于一次性迁移）
+LEGACY_STORE_PATH = os.path.join(os.path.dirname(KNOWLEDGE_BASE_DIR), "backend", "vector_store")
 
 
 def chunk_text(text: str, chunk_size: int = 500, overlap: int = 100) -> List[str]:
@@ -128,8 +21,6 @@ def chunk_text(text: str, chunk_size: int = 500, overlap: int = 100) -> List[str
     while start < len(text):
         end = start + chunk_size
         chunk = text[start:end]
-
-        # 尝试在句子边界处分割
         if end < len(text):
             for sep in ["\n\n", "\n", "。", "！", "？", ".", "!", "?"]:
                 last_sep = chunk.rfind(sep)
@@ -137,10 +28,8 @@ def chunk_text(text: str, chunk_size: int = 500, overlap: int = 100) -> List[str
                     end = start + last_sep + 1
                     chunk = text[start:end]
                     break
-
         chunks.append(chunk.strip())
         start = end - overlap if end - overlap > start else end
-
     return [c for c in chunks if c]
 
 
@@ -186,59 +75,79 @@ def _generate_summary_and_tags(content: str) -> dict:
         return {"summary": fallback_summary, "tags": [], "difficulty": "进阶"}
 
 
+# ===== 旧向量存储迁移（一次性） =====
+def _migrate_legacy_store():
+    """若 Chroma 为空且存在旧 store.json，则把旧文档重新嵌入并导入。"""
+    try:
+        col = _get_collection()
+        if col.count() > 0:
+            return
+        data_path = os.path.join(LEGACY_STORE_PATH, "store.json")
+        if not os.path.exists(data_path):
+            return
+        with open(data_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        legacy_docs = data.get("documents", [])
+        if not legacy_docs:
+            return
+        ids, docs, metas = [], [], []
+        for d in legacy_docs:
+            tid = d.get("task_id", "default")
+            meta = {
+                "task_id": tid,
+                "source": d.get("source", "unknown"),
+                "chunk_index": int(d.get("chunk_index", 0)),
+                "summary": d.get("summary", "") or "",
+                "tags": json.dumps(d.get("tags", []), ensure_ascii=False),
+                "difficulty": d.get("difficulty", "") or "",
+            }
+            ids.append(d.get("id", f"legacy_{len(ids)}"))
+            docs.append(d.get("content", ""))
+            metas.append(meta)
+        if ids:
+            col.add(ids=ids, documents=docs, metadatas=metas)
+            print(f"[rag_service] 已从旧 store.json 迁移 {len(ids)} 个文本块到 Chroma")
+    except Exception as e:
+        print(f"[rag_service] 旧数据迁移失败（可忽略）: {e}")
+
+
+# 对外 API ============================================================
+
 def add_document(filepath: str, filename: str, task_id: str = "default") -> dict:
     """向知识库添加文档（支持按任务隔离）"""
-    global _documents, _embeddings, _vocab, _vocab_size
-
-    # 解析文件
     parse_result = parse_file(filepath, filename)
     if not parse_result["success"]:
         return {"success": False, "message": parse_result["content"], "chunks": 0}
 
     content = parse_result["content"]
     chunks = chunk_text(content)
-
     if not chunks:
         return {"success": False, "message": "无法从文件中提取有效文本", "chunks": 0}
 
     try:
-        # 确保已加载
-        if not _documents:
-            _load_vector_store()
-
+        col = _get_collection()
         doc_id_base = os.path.splitext(filename)[0].replace(" ", "_")
-
-        # 生成文档教学摘要、知识点标签和难度评级
         meta = _generate_summary_and_tags(content)
 
-        # 新建文档块（带 task_id）
-        new_docs = []
+        ids, docs, metas = [], [], []
         for i, chunk in enumerate(chunks):
-            new_docs.append({
-                "id": f"{doc_id_base}_{i}",
+            ids.append(f"{doc_id_base}_{i}")
+            docs.append(chunk)
+            metas.append({
+                "task_id": task_id,
                 "source": filename,
                 "chunk_index": i,
-                "content": chunk,
-                "task_id": task_id,
                 "summary": meta["summary"] if i == 0 else "",
-                "tags": meta["tags"] if i == 0 else [],
+                "tags": json.dumps(meta["tags"], ensure_ascii=False) if i == 0 else "",
                 "difficulty": meta["difficulty"] if i == 0 else "",
             })
 
-        # 重建词汇表（包含新文档）
-        all_contents = [d["content"] for d in _documents] + [d["content"] for d in new_docs]
-        _build_vocab(all_contents)
-
-        # 重建所有向量
-        all_vectors = []
-        for doc in _documents + new_docs:
-            vec = _text_to_vector(doc["content"])
-            all_vectors.append(vec)
-
-        _documents = _documents + new_docs
-        _embeddings = np.array(all_vectors, dtype=np.float32)
-
-        _save_vector_store()
+        # 先删同 doc_id 的旧块（避免重复）
+        try:
+            col.delete(where={"source": filename})
+        except Exception:
+            pass
+        col.add(ids=ids, documents=docs, metadatas=metas)
 
         return {
             "success": True,
@@ -255,219 +164,176 @@ def add_document(filepath: str, filename: str, task_id: str = "default") -> dict
 
 def search_knowledge(query: str, top_k: int = 5, task_id: str = None) -> List[dict]:
     """搜索知识库（支持按任务过滤）"""
-    global _documents, _embeddings
-
-    if not _documents:
-        _load_vector_store()
-
-    if not _documents or _embeddings is None:
-        return []
-
-    # 构建过滤掩码
-    mask = None
-    if task_id:
-        mask = [d.get("task_id", "default") == task_id for d in _documents]
-
     try:
-        query_vec = _text_to_vector(query)
-        scores = _cosine_similarity(query_vec, _embeddings)
-
-        # 非目标任务的文档置零
-        if mask is not None:
-            for i in range(len(scores)):
-                if not mask[i]:
-                    scores[i] = 0
-
-        # 取 top_k
-        top_indices = np.argsort(scores)[::-1][:top_k]
-
+        col = _get_collection()
+        if col.count() == 0:
+            _migrate_legacy_store()
+        if col.count() == 0:
+            return []
+        res = col.query(
+            query_texts=[query],
+            n_results=top_k,
+            where=_where_task(task_id),
+        )
         results = []
-        for idx in top_indices:
-            if scores[idx] > 0.01:
-                doc = _documents[idx]
-                results.append({
-                    "content": doc["content"],
-                    "source": doc.get("source", "unknown"),
-                    "score": round(float(scores[idx]), 4),
-                })
-
+        docs = (res.get("documents") or [[]])[0]
+        metas = (res.get("metadatas") or [[]])[0]
+        dists = (res.get("distances") or [[]])[0]
+        for doc, meta, dist in zip(docs, metas, dists):
+            # 余弦距离转相似度
+            score = round(1.0 - float(dist), 4)
+            if score <= 0.01:
+                continue
+            results.append({
+                "content": doc,
+                "source": (meta or {}).get("source", "unknown"),
+                "score": score,
+            })
         return results
     except Exception as e:
-        print(f"Search error: {e}")
+        print(f"[rag_service] 搜索失败: {e}")
         return []
 
 
 def remove_document(doc_id: str, task_id: str = None) -> dict:
     """从知识库中删除文档（支持按任务过滤）"""
-    global _documents, _embeddings
-
-    if not _documents:
-        _load_vector_store()
-
-    original_count = len(_documents)
-
-    def should_remove(d):
-        if not d["id"].startswith(doc_id):
-            return False
-        if task_id and d.get("task_id", "default") != task_id:
-            return False
-        return True
-
-    _documents = [d for d in _documents if not should_remove(d)]
-    removed = original_count - len(_documents)
-
-    if removed > 0:
-        # 重建词汇表和向量
-        if _documents:
-            all_contents = [d["content"] for d in _documents]
-            _build_vocab(all_contents)
-            _embeddings = np.array([_text_to_vector(d["content"]) for d in _documents], dtype=np.float32)
-        else:
-            _embeddings = None
-            _vocab = {}
-            _vocab_size = 0
-
-        _save_vector_store()
-        return {"success": True, "message": f"已删除文档 '{doc_id}' ({removed} 个文本块)"}
-    return {"success": False, "message": f"未找到文档 '{doc_id}'"}
+    try:
+        col = _get_collection()
+        before = col.count()
+        # 按 source 删除（source 是文件名，doc_id 是去扩展名的文件名）
+        # 先按 source 前缀筛选：用 get 找到匹配的 id
+        all_docs = col.get()
+        ids_to_delete = []
+        for _id, meta in zip(all_docs.get("ids", []), all_docs.get("metadatas", [])):
+            source = (meta or {}).get("source", "")
+            base = os.path.splitext(source)[0].replace(" ", "_")
+            if base != doc_id:
+                continue
+            if task_id and (meta or {}).get("task_id", "default") != task_id:
+                continue
+            ids_to_delete.append(_id)
+        if ids_to_delete:
+            col.delete(ids=ids_to_delete)
+            return {"success": True, "message": f"已删除文档 '{doc_id}' ({len(ids_to_delete)} 个文本块)"}
+        return {"success": False, "message": f"未找到文档 '{doc_id}'"}
+    except Exception as e:
+        return {"success": False, "message": f"删除失败: {str(e)}"}
 
 
 def get_document_content(doc_id: str, task_id: str = None) -> dict:
-    """获取文档的完整内容（拼接所有文本块，支持按任务过滤）"""
-    global _documents
-    if not _documents:
-        _load_vector_store()
-
-    chunks = [d for d in _documents if d["id"].startswith(doc_id)]
-    if task_id:
-        chunks = [d for d in chunks if d.get("task_id", "default") == task_id]
-    if not chunks:
-        return {"success": False, "message": f"未找到文档 '{doc_id}'"}
-
-    # 按 chunk_index 排序后拼接
-    chunks.sort(key=lambda d: d["chunk_index"])
-    full_content = "\n\n".join([c["content"] for c in chunks])
-    source = chunks[0].get("source", "unknown")
-
-    return {
-        "success": True,
-        "doc_id": doc_id,
-        "source": source,
-        "content": full_content,
-        "chunk_count": len(chunks),
-    }
+    """获取文档完整内容（拼接所有块）"""
+    try:
+        col = _get_collection()
+        all_docs = col.get()
+        chunks = []
+        for _id, meta, doc in zip(all_docs.get("ids", []), all_docs.get("metadatas", []), all_docs.get("documents", [])):
+            source = (meta or {}).get("source", "")
+            base = os.path.splitext(source)[0].replace(" ", "_")
+            if base != doc_id:
+                continue
+            if task_id and (meta or {}).get("task_id", "default") != task_id:
+                continue
+            chunks.append((int((meta or {}).get("chunk_index", 0)), (meta or {}).get("source", "unknown"), doc))
+        if not chunks:
+            return {"success": False, "message": f"未找到文档 '{doc_id}'"}
+        chunks.sort(key=lambda x: x[0])
+        source = chunks[0][1]
+        full = "\n\n".join(c[2] for c in chunks)
+        return {"success": True, "doc_id": doc_id, "source": source, "content": full, "chunk_count": len(chunks)}
+    except Exception as e:
+        return {"success": False, "message": f"读取失败: {str(e)}"}
 
 
 def update_document_content(doc_id: str, new_content: str, task_id: str = None) -> dict:
-    """更新文档内容：删除旧块 -> 重新分块 -> 重建索引（支持按任务过滤）"""
-    global _documents, _embeddings, _vocab, _vocab_size
+    """更新文档内容：删除旧块 -> 重新分块 -> 重建索引"""
+    try:
+        col = _get_collection()
+        # 找旧块
+        all_docs = col.get()
+        old_ids, saved_task_id, source = [], "default", "unknown"
+        for _id, meta in zip(all_docs.get("ids", []), all_docs.get("metadatas", [])):
+            src = (meta or {}).get("source", "unknown")
+            base = os.path.splitext(src)[0].replace(" ", "_")
+            if base != doc_id:
+                continue
+            if task_id and (meta or {}).get("task_id", "default") != task_id:
+                continue
+            old_ids.append(_id)
+            saved_task_id = (meta or {}).get("task_id", "default")
+            source = src
+        if not old_ids:
+            return {"success": False, "message": f"未找到文档 '{doc_id}'"}
+        col.delete(ids=old_ids)
 
-    if not _documents:
-        _load_vector_store()
-
-    old_chunks = [d for d in _documents if d["id"].startswith(doc_id)]
-    if task_id:
-        old_chunks = [d for d in old_chunks if d.get("task_id", "default") == task_id]
-    if not old_chunks:
-        return {"success": False, "message": f"未找到文档 '{doc_id}'"}
-
-    source = old_chunks[0].get("source", "unknown")
-    saved_task_id = old_chunks[0].get("task_id", "default")
-
-    # 删除旧块
-    _documents = [d for d in _documents if not (d["id"].startswith(doc_id) and (not task_id or d.get("task_id", "default") == task_id))]
-
-    # 重新分块
-    new_chunks = chunk_text(new_content)
-    if not new_chunks:
-        return {"success": False, "message": "新内容无法提取有效文本"}
-
-    # 创新点：内容更新后重新生成摘要、标签和难度评级
-    new_meta = _generate_summary_and_tags(new_content)
-
-    # 添加新块（保留原 task_id）
-    for i, chunk in enumerate(new_chunks):
-        _documents.append({
-            "id": f"{doc_id}_{i}",
-            "source": source,
-            "chunk_index": i,
-            "content": chunk,
-            "task_id": saved_task_id,
-            "summary": new_meta["summary"] if i == 0 else "",
-            "tags": new_meta["tags"] if i == 0 else [],
-            "difficulty": new_meta["difficulty"] if i == 0 else "",
-        })
-
-    # 重建词汇表和向量
-    all_contents = [d["content"] for d in _documents]
-    _build_vocab(all_contents)
-    _embeddings = np.array([_text_to_vector(d["content"]) for d in _documents], dtype=np.float32)
-
-    _save_vector_store()
-
-    return {
-        "success": True,
-        "message": f"已更新文档 '{source}'，共 {len(new_chunks)} 个文本块",
-        "chunk_count": len(new_chunks),
-        "old_chunks": len(old_chunks),
-    }
+        new_chunks = chunk_text(new_content)
+        if not new_chunks:
+            return {"success": False, "message": "新内容无法提取有效文本"}
+        new_meta = _generate_summary_and_tags(new_content)
+        ids, docs, metas = [], [], []
+        for i, chunk in enumerate(new_chunks):
+            ids.append(f"{doc_id}_{i}")
+            docs.append(chunk)
+            metas.append({
+                "task_id": saved_task_id,
+                "source": source,
+                "chunk_index": i,
+                "summary": new_meta["summary"] if i == 0 else "",
+                "tags": json.dumps(new_meta["tags"], ensure_ascii=False) if i == 0 else "",
+                "difficulty": new_meta["difficulty"] if i == 0 else "",
+            })
+        col.add(ids=ids, documents=docs, metadatas=metas)
+        return {"success": True, "message": f"已更新文档 '{source}'，共 {len(new_chunks)} 个文本块",
+                "chunk_count": len(new_chunks), "old_chunks": len(old_ids)}
+    except Exception as e:
+        return {"success": False, "message": f"更新失败: {str(e)}"}
 
 
 def list_documents(task_id: str = None) -> List[dict]:
     """列出知识库中的文档（支持按任务过滤）"""
-    global _documents
-    if not _documents:
-        _load_vector_store()
-
-    if not _documents:
+    try:
+        col = _get_collection()
+        all_docs = col.get()
+        docs_map = {}
+        for _id, meta, doc in zip(all_docs.get("ids", []), all_docs.get("metadatas", []), all_docs.get("documents", [])):
+            m = meta or {}
+            if task_id and m.get("task_id", "default") != task_id:
+                continue
+            source = m.get("source", "unknown")
+            if source not in docs_map:
+                doc_id_base = os.path.splitext(source)[0].replace(" ", "_")
+                docs_map[source] = {
+                    "filename": source, "doc_id": doc_id_base, "chunk_count": 0,
+                    "sample": "", "summary": "", "tags": [], "difficulty": "",
+                }
+            docs_map[source]["chunk_count"] += 1
+            if not docs_map[source]["sample"]:
+                docs_map[source]["sample"] = (doc or "")[:200]
+            if int(m.get("chunk_index", 0)) == 0:
+                docs_map[source]["summary"] = m.get("summary", "")
+                try:
+                    docs_map[source]["tags"] = json.loads(m.get("tags", "[]"))
+                except Exception:
+                    docs_map[source]["tags"] = []
+                docs_map[source]["difficulty"] = m.get("difficulty", "")
+        return list(docs_map.values())
+    except Exception as e:
+        print(f"[rag_service] 列出文档失败: {e}")
         return []
-
-    # 按源文件分组（可选 task_id 过滤）
-    docs_map = {}
-    for doc in _documents:
-        if task_id and doc.get("task_id", "default") != task_id:
-            continue
-        source = doc.get("source", "unknown")
-        if source not in docs_map:
-            doc_id_base = os.path.splitext(source)[0].replace(" ", "_")
-            docs_map[source] = {
-                "filename": source, "doc_id": doc_id_base, "chunk_count": 0,
-                "sample": "", "summary": "", "tags": [], "difficulty": "",
-            }
-        docs_map[source]["chunk_count"] += 1
-        if not docs_map[source]["sample"]:
-            docs_map[source]["sample"] = doc["content"][:200]
-        # 从首个文本块读取摘要、标签和难度
-        if doc.get("chunk_index", 0) == 0:
-            docs_map[source]["summary"] = doc.get("summary", "")
-            docs_map[source]["tags"] = doc.get("tags", [])
-            docs_map[source]["difficulty"] = doc.get("difficulty", "")
-
-    return list(docs_map.values())
 
 
 def load_knowledge_base_dir(directory: str = None) -> dict:
     """批量加载知识库目录中的文件"""
     if directory is None:
         directory = KNOWLEDGE_BASE_DIR
-
     if not os.path.exists(directory):
         return {"success": False, "message": f"目录不存在: {directory}"}
-
     supported_exts = {".pdf", ".docx", ".doc", ".txt", ".md"}
     results = []
-
     for filename in os.listdir(directory):
         filepath = os.path.join(directory, filename)
         if not os.path.isfile(filepath):
             continue
         ext = os.path.splitext(filename)[1].lower()
         if ext in supported_exts:
-            result = add_document(filepath, filename)
-            results.append(result)
-
-    return {
-        "success": True,
-        "message": f"已加载 {len(results)} 个文件",
-        "details": results,
-    }
+            results.append(add_document(filepath, filename))
+    return {"success": True, "message": f"已加载 {len(results)} 个文件", "details": results}

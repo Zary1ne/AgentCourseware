@@ -10,7 +10,7 @@
       <div class="workspace__bar">
         <div class="workspace__bar-left">
           <span v-if="currentStep === 0">上传参考资料 —— AI 会在对话中参考这些内容</span>
-          <span v-else-if="currentStep === 1">{{ activeTask.messages.length }} 条消息<span v-if="activeTask.intent" class="workspace__intent">&nbsp;· 意图已确认</span></span>
+          <span v-else-if="currentStep === 1">{{ activeTask.messages.length }} 条消息<span v-if="activeTask.intent" class="workspace__intent">&nbsp;· 意图：{{ intentText }}</span></span>
           <span v-else>{{ fileCount }} 个文件就绪</span>
         </div>
         <div class="workspace__bar-right">
@@ -25,15 +25,18 @@
 </template>
 
 <script setup>
-import { ref, computed, reactive, triggerRef } from 'vue'
-import { useTaskStore } from '../composables/useTaskStore'
+import { ref, computed, reactive } from 'vue'
+import { storeToRefs } from 'pinia'
+import { useTaskStore } from '../stores/taskStore'
 import TaskSidebar from '../components/TaskSidebar.vue'
 import KnowledgePanel from '../components/KnowledgePanel.vue'
 import ChatPanel from '../components/ChatPanel.vue'
 import PreviewPanel from '../components/PreviewPanel.vue'
 import { sendMessage, extractIntent, generateAll } from '../api'
 
-const { activeTask, currentStep, setStep, triggerTaskUpdate } = useTaskStore()
+const store = useTaskStore()
+const { activeTask, currentStep } = storeToRefs(store)
+const { setStep, triggerTaskUpdate } = store
 const chatLoading = ref(false)
 const genLoading = ref(false)
 let abortController = null
@@ -42,6 +45,16 @@ let abortController = null
 const messageTick = ref(0)
 
 const fileCount = computed(() => Object.keys(activeTask.value.genFiles).length)
+
+const intentText = computed(() => {
+  const intent = activeTask.value.intent
+  if (!intent) return ''
+  const parts = []
+  if (intent.subject) parts.push(intent.subject)
+  if (intent.grade) parts.push(intent.grade)
+  if (intent.duration) parts.push(intent.duration)
+  return parts.join(' / ') || '意图已确认'
+})
 
 // 从对话端送入预览端的 slides 数据
 const previewSlides = ref(null)
@@ -275,79 +288,90 @@ async function onSendMessage(text, promptType = '') {
   if (!text.trim() || chatLoading.value) return
   activeTask.value.messages.push({ role:'user', content:text, _id: Date.now() + '_user' })
   chatLoading.value = true; abortController = new AbortController()
+  const assistantMsg = reactive({ role:'assistant', content:'', _id: Date.now() + '_ai' }); activeTask.value.messages.push(assistantMsg)
+  const MAX_RETRY = 3
+  let lastError = null
   try {
-    const response = await sendMessage(activeTask.value.messages.map(m=>({role:m.role,content:m.content})), true, abortController.signal, promptType)
-    if (!response.ok) throw new Error('请求失败')
-    // 用 reactive 创建：push 后本地变量与数组内是同一个代理，
-    // 后续 content += 才能触发视图更新（否则流式期间界面不刷新，结束时一次性弹出）
-    const assistantMsg = reactive({ role:'assistant', content:'', _id: Date.now() + '_ai' }); activeTask.value.messages.push(assistantMsg)
-    const reader = response.body.getReader(); const decoder = new TextDecoder()
-    let buffer = ''
-    let eventDataLines = []
-    let eventType = 'message'
+  for (let attempt = 1; attempt <= MAX_RETRY; attempt++) {
+    try {
+      const response = await sendMessage(activeTask.value.messages.filter(m=>m._id!==assistantMsg._id).map(m=>({role:m.role,content:m.content})), true, abortController.signal, promptType)
+      if (!response.ok) throw new Error('请求失败 (' + response.status + ')')
+      const reader = response.body.getReader(); const decoder = new TextDecoder()
+      let buffer = ''
+      let eventDataLines = []
+      let eventType = 'message'
 
-    let intentReadyFlag = false
+      let intentReadyFlag = false
 
-    function flushEvent() {
-      if (eventDataLines.length === 0) return
-      const dataStr = eventDataLines.join('\n')
-      eventDataLines = []
-      if (eventType === 'intents') {
-        try { activeTask.value.intent = JSON.parse(dataStr) } catch {}
-        return
-      }
-      if (eventType === 'done' || dataStr === '[DONE]') return
-      if (intentReadyFlag) return
+      function flushEvent() {
+        if (eventDataLines.length === 0) return
+        const dataStr = eventDataLines.join('\n')
+        eventDataLines = []
+        if (eventType === 'intents') {
+          try { activeTask.value.intent = JSON.parse(dataStr) } catch {}
+          return
+        }
+        if (eventType === 'done' || dataStr === '[DONE]') return
+        if (intentReadyFlag) return
 
-      // sse_starlette 输出格式：
-      // - message 事件 data 是纯文本（后端 yield {"data": chunk}，chunk 已是字符串）
-      // - intents/intent 事件 data 是 JSON 字符串
-      // - done 事件 data 是 "[DONE]"
-      let textChunk = ''
-      if (eventType === 'message') {
-        // 直接作为文本追加，sse_starlette 不做 JSON 编码
-        textChunk = dataStr
-      } else if (eventType === 'intent') {
-        try { activeTask.value.intent = JSON.parse(dataStr) } catch {}
-        return
-      } else {
-        textChunk = dataStr
-      }
+        let textChunk = ''
+        if (eventType === 'message') {
+          textChunk = dataStr
+        } else if (eventType === 'intent') {
+          try { activeTask.value.intent = JSON.parse(dataStr) } catch {}
+          return
+        } else {
+          textChunk = dataStr
+        }
 
-      if (textChunk.includes('[INTENT_READY]')) {
-        intentReadyFlag = true
-        textChunk = textChunk.slice(0, textChunk.indexOf('[INTENT_READY]'))
-      }
+        if (textChunk.includes('[INTENT_READY]')) {
+          intentReadyFlag = true
+          textChunk = textChunk.slice(0, textChunk.indexOf('[INTENT_READY]'))
+        }
 
-      if (textChunk) {
-        assistantMsg.content += textChunk
-        triggerTaskUpdate()
-      }
-    }
-
-    while (true) {
-      const { done, value } = await reader.read(); if (done) break
-      buffer += decoder.decode(value, { stream:true })
-      // sse_starlette uses \r\n (CRLF) as separator, normalize to \n first
-      buffer = buffer.replace(/\r\n/g, '\n')
-      const parts = buffer.split('\n')
-      buffer = parts.pop() || ''
-      for (const line of parts) {
-        if (line === '') {
-          flushEvent()
-        } else if (line.startsWith('event:')) {
-          eventType = line.slice(6).trim()
-        } else if (line.startsWith('data:')) {
-          eventDataLines.push(line.slice(5).trimStart())
+        if (textChunk) {
+          assistantMsg.content += textChunk
+          triggerTaskUpdate()
         }
       }
-    }
-    flushEvent()
 
-    // 最终清理：剥离 JSON 意图块 + 规范排版
-    assistantMsg.content = normalizeContent(assistantMsg.content)
-  } catch (e) { if (e.name !== 'AbortError') activeTask.value.messages.push({ role:'assistant', content:'错误：'+e.message, _id: Date.now() + '_err' }) }
-  finally { chatLoading.value = false; abortController = null }
+      while (true) {
+        const { done, value } = await reader.read(); if (done) break
+        buffer += decoder.decode(value, { stream:true })
+        buffer = buffer.replace(/\r\n/g, '\n')
+        const parts = buffer.split('\n')
+        buffer = parts.pop() || ''
+        for (const line of parts) {
+          if (line === '') {
+            flushEvent()
+          } else if (line.startsWith('event:')) {
+            eventType = line.slice(6).trim()
+          } else if (line.startsWith('data:')) {
+            eventDataLines.push(line.slice(5).trimStart())
+          }
+        }
+      }
+      flushEvent()
+
+      assistantMsg.content = normalizeContent(assistantMsg.content)
+      lastError = null
+      break // 成功，退出重试循环
+    } catch (e) {
+      if (e.name === 'AbortError') { lastError = e; break }
+      lastError = e
+      // 网络中断重连：未到最大次数则提示并重试
+      if (attempt < MAX_RETRY) {
+        assistantMsg.content += (attempt === 1 ? '\n\n*网络连接中断，正在重连…*' : `\n*第${attempt}次重连…*`)
+        triggerTaskUpdate()
+        await new Promise(r => setTimeout(r, 800 * attempt))
+      }
+    }
+  }
+  if (lastError && lastError.name !== 'AbortError') {
+    assistantMsg.content += '\n\n*连接失败：' + lastError.message + '*'
+    triggerTaskUpdate()
+  }
+  } finally { chatLoading.value = false; abortController = null }
 }
 
 async function onGenerate() {

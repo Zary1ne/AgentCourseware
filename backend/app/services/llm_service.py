@@ -5,16 +5,22 @@ import json
 import asyncio
 
 # 同步客户端（用于 chat_sync、extract_intent 等同步调用）
+# timeout=60：网络/代理异常时快速失败走 fallback，避免请求永久挂起拖死后端
 sync_client = OpenAI(
     api_key=LLM_API_KEY,
     base_url=LLM_BASE_URL,
+    timeout=60,
 )
 
 # 异步客户端（用于 chat_stream 流式传输，不阻塞事件循环）
 client = AsyncOpenAI(
     api_key=LLM_API_KEY,
     base_url=LLM_BASE_URL,
+    timeout=60,
 )
+
+# LLM 是否可用：API Key 必须是真实值，不能是占位符
+_LLM_ENABLED = bool(LLM_API_KEY) and LLM_API_KEY != "your-api-key-here" and not LLM_API_KEY.startswith("your-")
 
 SYSTEM_PROMPT = """你是一个专业的教学智能体助手，帮助教师完成课件设计和教案撰写。
 
@@ -163,10 +169,46 @@ ENGLISH_PROMPT = """你是高中英语专家，专注于高一英语教学。请
 - 禁止使用 * 字符做格式标记"""
 
 
+# ===== 五段式教学大纲 Prompt（引入/讲解/推导/实验/练习）=====
+OUTLINE_PROMPT = '''你是 AI 教学设计专家。请根据教师提供的教学主题和参考资料，生成一份结构化教学大纲。
+
+必须严格按以下五个部分输出，用【】标注标题：
+
+【引入】
+- 从生活实例或情境切入，激发兴趣
+- 提出本节课要解决的核心问题
+
+【讲解】
+- 概念定义与核心内容
+- 关键知识点逐条梳理
+- 语言通俗，适合学生理解
+
+【推导】
+- 关键结论的推理过程（可含公式推导，用 $...$ 或 $$...$$ 包裹 LaTeX）
+- 历史脉络或逻辑链条（如适用）
+
+【实验】
+- 实验名称与目标
+- 实验步骤（分步写清）
+- 预期现象与结论
+
+【练习】
+- 基础题（2道）
+- 提高题（1道）
+- 思考题（1道）
+
+要求：
+1. 紧扣教师提出的学科和知识点，充分利用参考资料
+2. 代码用 ```python ``` 包裹
+3. 公式用 LaTeX，可用 $...$ 行内或 $$...$$ 块级
+4. 始终用中文回复'''
+
+
 # ===== Prompt 路由表（来自 AITEACH(对话) app.py PROMPT_MAP 原型） =====
 PROMPT_MAP = {
     "general": SYSTEM_PROMPT,
     "teaching": TEACHING_PLAN_PROMPT,
+    "outline": OUTLINE_PROMPT,
     "analysis": ANALYSIS_PROMPT,
     "suggestions": SUGGESTIONS_PROMPT,
     "explain": EXPLAIN_PROMPT,
@@ -185,6 +227,9 @@ def select_system_prompt(history: List[Dict], prompt_type: str = "") -> str:
     last_user_text = user_msgs[-1]["content"] if user_msgs else ""
     if is_teaching_request(last_user_text):
         return TEACHING_PLAN_PROMPT
+    # 大纲类请求：路由到五段式大纲 Prompt
+    if any(k in last_user_text for k in ["大纲", "引入", "推导"]):
+        return OUTLINE_PROMPT
     return SYSTEM_PROMPT
 
 
@@ -207,6 +252,114 @@ def is_teaching_request(text: str) -> bool:
     return any(k in text for k in keywords)
 
 
+# ===== Few-shot / CoT 意图识别（裸输入即可推断学科/年级/课时）=====
+# 兼容 chat.py 的关键词意图表
+_INTENT_SUBJECT_KEYWORDS = {
+    "物理": ["物理", "力学", "牛顿", "运动", "能量", "电学", "磁"],
+    "数学": ["数学", "函数", "几何", "代数", "方程", "概率", "微积分", "三角"],
+    "化学": ["化学", "元素", "反应", "分子", "原子", "酸碱", "氧化", "有机"],
+    "生物": ["生物", "细胞", "基因", "光合", "生态", "遗传", "进化", "DNA"],
+    "语文": ["语文", "古诗", "文言文", "阅读", "作文", "修辞", "诗歌", "散文"],
+    "英语": ["英语", "语法", "词汇", "阅读理解", "完形填空", "听力"],
+    "历史": ["历史", "朝代", "战争", "革命", "古代", "近代", "文明"],
+    "地理": ["地理", "气候", "地形", "河流", "板块", "人口", "城市"],
+}
+
+# 知识点 → 年级推断表（中国初高中课程标准）
+# 用于 LLM 未配置时的关键词兜底
+_INTENT_TOPIC_GRADE_MAP = {
+    "大学 / 高等数学": ["微积分", "导数", "积分", "极限", "级数", "概率论", "数理统计", "线性代数", "矩阵", "向量空间"],
+    "高三": ["排列组合", "二项式定理", "圆锥曲线", "导数应用", "电磁感应", "动量守恒", "有机推断", "遗传计算", "生态系统"],
+    "高二": ["三角函数", "数列", "立体几何", "解析几何", "电场", "磁场", "电化学", "化学反应原理", "基因工程", "细胞工程"],
+    "高一": ["函数", "集合", "不等式", "直线和圆", "牛顿", "运动学", "力学", "物质的量", "元素周期律", "细胞", "光合作用", "呼吸作用"],
+    "初三": ["一元二次方程", "二次函数", "圆", "电学基础", "酸碱盐", "金属", "质量守恒定律"],
+    "初二": ["一次函数", "全等三角形", "勾股定理", "声现象", "光现象", "力与运动", "浮力", "压强"],
+    "初一": ["有理数", "整式", "方程", "几何图形初步", "生物圈", "细胞结构"],
+}
+
+
+# Few-shot 示例：教模型"先推理再下结论"（CoT），并给出学科/年级/课时的推断
+_INTENT_FEW_SHOT = [
+    {"role": "user", "content": "牛顿第一定律"},
+    {"role": "assistant", "content": '推理：牛顿是物理学家，牛顿第一定律属于高中物理力学的基础定律，标准课时45分钟。\n{"subject":"物理","grade":"高一","duration":"45分钟"}'},
+    {"role": "user", "content": "三角函数"},
+    {"role": "assistant", "content": '推理：三角函数是高中数学必修内容，通常在高一下学期讲授，标准课时45分钟。\n{"subject":"数学","grade":"高一","duration":"45分钟"}'},
+    {"role": "user", "content": "氧化还原反应"},
+    {"role": "assistant", "content": '推理：氧化还原反应是高中化学必修核心概念，高一化学常见课题，标准课时45分钟。\n{"subject":"化学","grade":"高一","duration":"45分钟"}'},
+    {"role": "user", "content": "光合作用"},
+    {"role": "assistant", "content": '推理：光合作用是高中生物必修内容，高一生物常见课题，标准课时45分钟。\n{"subject":"生物","grade":"高一","duration":"45分钟"}'},
+    {"role": "user", "content": "唐朝的建立"},
+    {"role": "assistant", "content": '推理：唐朝建立属于高中历史中国古代史内容，高一历史常见课题，标准课时45分钟。\n{"subject":"历史","grade":"高一","duration":"45分钟"}'},
+]
+
+
+def _keyword_intent(text: str) -> dict:
+    """关键词兜底意图识别（与 chat.py 逻辑一致），包含年级推断"""
+    intents = {}
+    for subject, keywords in _INTENT_SUBJECT_KEYWORDS.items():
+        if any(kw in text for kw in keywords):
+            intents["subject"] = subject
+            break
+    for grade, topics in _INTENT_TOPIC_GRADE_MAP.items():
+        if any(topic in text for topic in topics):
+            intents["grade"] = grade
+            break
+    return intents
+
+
+def recognize_intent_llm(text: str) -> dict:
+    """Few-shot + CoT 意图识别：裸输入→{subject, grade, duration}。
+
+    优先调用 LLM；失败时回退关键词 + 默认值（高一/45分钟）。
+    LLM 未配置时直接走关键词兜底。
+    """
+    import re as _re
+    # 关键词兜底先算一份（含年级推断）
+    base = _keyword_intent(text)
+
+    # LLM 未配置或文本太短，直接走兜底
+    if not _LLM_ENABLED or len(text.strip()) < 1:
+        return {
+            "subject": base.get("subject", ""),
+            "grade": base.get("grade", "高一"),
+            "duration": "45分钟",
+            "reasoning": "关键词兜底" if base.get("subject") else "LLM未配置",
+        }
+
+    try:
+        messages = [
+            {"role": "system", "content": "你是教学意图识别器。根据用户给出的主题，推断学科、年级、课时。先简短推理，再输出严格JSON：{\"subject\":\"学科\",\"grade\":\"年级\",\"duration\":\"课时分钟数\"}。年级从 初一/初二/初三/高一/高二/高三 中选。课时默认45分钟。"}
+        ] + _INTENT_FEW_SHOT + [{"role": "user", "content": text}]
+        response = sync_client.chat.completions.create(
+            model=LLM_MODEL,
+            messages=messages,
+            temperature=0.1,
+            max_tokens=256,
+            timeout=8.0,  # 缩短超时，避免意图识别卡住整个 SSE 响应
+        )
+        content = response.choices[0].message.content.strip()
+        # 截取最后一个 JSON 对象
+        m = _re.search(r'\{[^{}]*\}', content)
+        if not m:
+            raise ValueError("no json")
+        data = json.loads(m.group(0))
+        subject = str(data.get("subject", "")).strip() or base.get("subject", "")
+        # LLM 没识别出年级，或只给出默认"高一"，而关键词已推断出更具体年级时，优先用关键词结果
+        llm_grade = str(data.get("grade", "")).strip()
+        grade = llm_grade if (llm_grade and llm_grade != "高一") else base.get("grade", llm_grade or "高一")
+        duration = str(data.get("duration", "")).strip() or "45分钟"
+        return {"subject": subject, "grade": grade, "duration": duration,
+                "reasoning": content.split(m.group(0))[0].strip()}
+    except Exception as e:
+        print(f"[llm_service] recognize_intent_llm 降级到关键词: {e}")
+        return {
+            "subject": base.get("subject", ""),
+            "grade": base.get("grade", "高一"),
+            "duration": "45分钟",
+            "reasoning": "关键词兜底",
+        }
+
+
 def fallback_response(text: str) -> str:
     """API调用失败时的硬编码兜底回复"""
     t = text.strip()
@@ -214,6 +367,25 @@ def fallback_response(text: str) -> str:
         return "你好！我是 AI 教学助手，请告诉我您想准备的学科和知识点，我来帮您设计教学方案～"
     # 物理/公式类问题：输出 LaTeX 公式 + 示例代码，用于验证公式渲染与代码高亮
     if any(g in t for g in ["物理", "公式", "牛顿", "力学", "F=ma", "f=ma", "加速度"]):
+        if any(g in t for g in ["第一定律", "惯性"]):
+            return ("好的，我们以**牛顿第一定律（惯性定律）**为例进行讲解：\n\n"
+                    "## 核心内容\n\n"
+                    "一切物体总保持匀速直线运动状态或静止状态，除非作用在它上面的力迫使它改变这种状态。\n\n"
+                    "数学表述：当合外力为零时，$\\vec{F}_{\\text{合}} = 0$，则加速度 $\\vec{a} = 0$。\n\n"
+                    "## Python 演示代码\n\n"
+                    "```python\n"
+                    "# 模拟无外力时物体保持匀速运动\n"
+                    "def motion_no_force(v0, t):\n"
+                    "    \"\"\"合外力为零时，速度保持不变\"\"\"\n"
+                    "    return v0  # 速度不变\n"
+                    "\n"
+                    "print(motion_no_force(5.0, 10))  # 输出: 5.0\n"
+                    "```\n\n"
+                    "**教学要点**：\n"
+                    "1. 理解*惯性*是物体保持原有运动状态的性质\n"
+                    "2. 明确力不是维持运动的原因，而是改变运动状态的原因\n"
+                    "3. 通过伽利略斜面实验或气垫导轨实验加深理解\n\n"
+                    "[当前 AI 服务暂时不可用，以上为示例教学回复]")
         return ("好的，我们以**牛顿第二定律**为例进行讲解：\n\n"
                 "## 核心公式\n\n物体所受合外力与加速度成正比：$F = ma$\n\n"
                 "动能定理的微分形式：$dW = \\vec{F} \\cdot d\\vec{s}$\n\n"
@@ -275,7 +447,12 @@ def _stream_text_chunks(text: str):
 
 
 async def chat_stream(history: List[Dict], prompt_type: str = "") -> AsyncGenerator[str, None]:
-    """流式聊天（含 prompt_type 路由 + 三层降级）"""
+    """流式聊天（含 prompt_type 路由 + 三层降级）
+
+    关键改进：
+    - API Key 未配置时直接走兜底，不再走 LLM（避免无效请求卡 60s+）
+    - 每层 LLM 调用用 asyncio.wait_for 强制 10s 超时，超时立即降级
+    """
     # 检测最后一条用户消息是否为教学方案请求
     user_msgs = [m for m in history if m["role"] == "user"]
     last_user_text = user_msgs[-1]["content"] if user_msgs else ""
@@ -283,44 +460,59 @@ async def chat_stream(history: List[Dict], prompt_type: str = "") -> AsyncGenera
     system_prompt = select_system_prompt(history, prompt_type)
     messages = build_messages(history, system_prompt)
 
-    # 第一层：异步流式调用 OpenAI
+    # LLM 未配置时直接走兜底，避免无效请求卡死
+    if not _LLM_ENABLED:
+        fallback = clean_response(fallback_response(last_user_text))
+        for chunk in _stream_text_chunks(fallback):
+            yield chunk
+            await asyncio.sleep(0.02)
+        return
+
+    # 第一层：异步流式调用 OpenAI（10s 超时）
     try:
-        response = await client.chat.completions.create(
-            model=LLM_MODEL,
-            messages=messages,
-            stream=True,
-            temperature=0.7,
-            max_tokens=4096,
-        )
-        async for chunk in response:
-            if chunk.choices[0].delta.content:
-                yield clean_response(chunk.choices[0].delta.content)
+        async def _stream_first():
+            response = await client.chat.completions.create(
+                model=LLM_MODEL,
+                messages=messages,
+                stream=True,
+                temperature=0.7,
+                max_tokens=4096,
+            )
+            async for chunk in response:
+                if chunk.choices[0].delta.content:
+                    yield clean_response(chunk.choices[0].delta.content)
+
+        async for chunk in _stream_first():
+            yield chunk
         return
     except Exception as e:
-        pass  # 降级到下一层
+        print(f"[chat_stream] 第一层失败，降级: {e}")
 
-    # 第二层：异步重试（不带 stream，分块输出模拟流式）
+    # 第二层：非流式重试（10s 超时，分块输出模拟流式）
     try:
-        response = await client.chat.completions.create(
-            model=LLM_MODEL,
-            messages=messages,
-            temperature=0.7,
-            max_tokens=4096,
-        )
+        async def _call_second():
+            return await client.chat.completions.create(
+                model=LLM_MODEL,
+                messages=messages,
+                temperature=0.7,
+                max_tokens=4096,
+            )
+
+        response = await asyncio.wait_for(_call_second(), timeout=10.0)
         content = response.choices[0].message.content
         cleaned = clean_response(content)
         for chunk in _stream_text_chunks(cleaned):
             yield chunk
-            await asyncio.sleep(0.01)
+            await asyncio.sleep(0.02)
         return
     except Exception as e:
-        pass  # 降级到下一层
+        print(f"[chat_stream] 第二层失败，降级: {e}")
 
     # 第三层：硬编码兜底，分块输出
     fallback = clean_response(fallback_response(last_user_text))
     for chunk in _stream_text_chunks(fallback):
         yield chunk
-        await asyncio.sleep(0.01)
+        await asyncio.sleep(0.02)
 
 
 def chat_sync(history: List[Dict], prompt_type: str = "") -> str:

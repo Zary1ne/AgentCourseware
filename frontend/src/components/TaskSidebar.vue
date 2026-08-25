@@ -26,8 +26,11 @@
 
 <script setup>
 import { ref, nextTick } from 'vue'
-import { useTaskStore } from '../composables/useTaskStore'
-const { tasks, activeTaskId, switchTask, createTask, deleteTask, renameTask } = useTaskStore()
+import { storeToRefs } from 'pinia'
+import { useTaskStore } from '../stores/taskStore'
+const store = useTaskStore()
+const { tasks, activeTaskId } = storeToRefs(store)
+const { switchTask, createTask, deleteTask, renameTask } = store
 const editingId = ref(null)
 const editName = ref('')
 

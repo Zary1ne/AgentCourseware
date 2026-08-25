@@ -1,9 +1,11 @@
 import { createApp } from 'vue'
+import { createPinia } from 'pinia'
 import App from './App.vue'
 import router from './router'
 import './index.css'
 
 const app = createApp(App)
+app.use(createPinia())
 
 // Global directive: v-scroll-in — adds .in-view when element enters viewport
 app.directive('scroll-in', {

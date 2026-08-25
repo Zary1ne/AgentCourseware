@@ -71,8 +71,8 @@ export function getDownloadUrl(filename) { return `/api/generate/download/${file
 export function getAdminStats() { return api.get('/admin/stats') }
 
 // ===== 认证相关 =====
-export function register(username, password) { return api.post('/auth/register', { username, password }) }
-export function login(username, password) { return api.post('/auth/login', { username, password }) }
+export function register(username, password, signal = null) { return api.post('/auth/register', { username, password }, signal ? { signal } : {}) }
+export function login(username, password, signal = null) { return api.post('/auth/login', { username, password }, signal ? { signal } : {}) }
 export function getUserInfo(userId) { return api.get(`/auth/user/${userId}`) }
 
 // ===== 开源社区 =====

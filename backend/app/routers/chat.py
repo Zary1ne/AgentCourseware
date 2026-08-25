@@ -9,7 +9,10 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse, Response
 from sse_starlette.sse import EventSourceResponse
 from app.models.schemas import ChatRequest, ChatMessage
-from app.services.llm_service import chat_stream, chat_sync, extract_intent, clean_response
+from app.services.llm_service import (
+    chat_stream, chat_sync, extract_intent, clean_response,
+    recognize_intent_llm,
+)
 from app.services.rag_service import search_knowledge
 from app.routers.admin import record_conversation
 
@@ -39,6 +42,18 @@ GRADE_KEYWORDS = {
     "初三": ["初三", "九年级"],
 }
 
+# 根据具体知识点推断年级（未显式提到年级时使用）
+# 覆盖中国初高中常见课程标准
+TOPIC_GRADE_MAP = {
+    "大学 / 高等数学": ["微积分", "导数", "积分", "极限", "级数", "概率论", "数理统计", "线性代数", "矩阵", "向量空间"],
+    "高三": ["排列组合", "二项式定理", "圆锥曲线", "导数应用", "电磁感应", "动量守恒", "有机推断", "遗传计算", "生态系统", "哲学"],
+    "高二": ["三角函数", "数列", "立体几何", "解析几何", "电场", "磁场", "电化学", "化学反应原理", "基因工程", "细胞工程", "辩证法"],
+    "高一": ["函数", "集合", "不等式", "直线和圆", "牛顿", "运动学", "力学", "物质的量", "元素周期律", "细胞", "光合作用", "呼吸作用", "分子与细胞"],
+    "初三": ["一元二次方程", "二次函数", "圆", "电学基础", "酸碱盐", "金属", "质量守恒定律"],
+    "初二": ["一次函数", "全等三角形", "勾股定理", "声现象", "光现象", "力与运动", "浮力", "压强"],
+    "初一": ["有理数", "整式", "方程", "几何图形初步", "生物圈", "细胞结构"],
+}
+
 TYPE_KEYWORDS = {
     "新课": ["新课", "新授课", "讲授"],
     "复习课": ["复习", "回顾", "总结课"],
@@ -48,7 +63,7 @@ TYPE_KEYWORDS = {
 
 
 def recognize_intent(text: str) -> dict:
-    """从用户输入中识别教学意图参数（关键词匹配）"""
+    """从用户输入中识别教学意图参数（关键词匹配 + 知识点年级推断）"""
     intents = {}
     for subject, keywords in SUBJECT_KEYWORDS.items():
         if any(kw in text for kw in keywords):
@@ -58,6 +73,12 @@ def recognize_intent(text: str) -> dict:
         if any(kw in text for kw in keywords):
             intents["grade"] = grade
             break
+    # 未显式提到年级时，根据知识点推断
+    if not intents.get("grade"):
+        for grade, topics in TOPIC_GRADE_MAP.items():
+            if any(topic in text for topic in topics):
+                intents["grade"] = grade
+                break
     for lesson_type, keywords in TYPE_KEYWORDS.items():
         if any(kw in text for kw in keywords):
             intents["type"] = lesson_type
@@ -178,9 +199,32 @@ async def send_message(request: ChatRequest):
         async def event_generator():
             user_msgs = [m for m in history if m["role"] == "user"]
             last_user_text = user_msgs[-1]["content"] if user_msgs else ""
+            # 第一层：关键词意图识别（快速，始终可用）
             keyword_intents = recognize_intent(last_user_text)
-            if keyword_intents:
-                yield {"event": "intents", "data": json.dumps(keyword_intents, ensure_ascii=False)}
+            # 第二层：Few-shot/CoT LLM 意图识别（可补全年级/课时）
+            # 裸输入如"牛顿第一定律"→{subject:物理,grade:高一,duration:45分钟}
+            llm_intents = {}
+            try:
+                llm_intents = await asyncio.to_thread(recognize_intent_llm, last_user_text)
+            except Exception as e:
+                print(f"[chat] LLM 意图识别跳过: {e}")
+            # 合并：LLM 结果优先，关键词补缺
+            merged = {**keyword_intents}
+            if llm_intents.get("subject"):
+                merged["subject"] = llm_intents["subject"]
+            # 年级：避免 LLM 默认"高一"覆盖关键词推断出的高年级/大学
+            llm_grade = llm_intents.get("grade", "")
+            keyword_grade = keyword_intents.get("grade", "")
+            if llm_grade and (llm_grade != "高一" or not keyword_grade):
+                merged["grade"] = llm_grade
+            elif keyword_grade:
+                merged["grade"] = keyword_grade
+            if llm_intents.get("duration"):
+                merged["duration"] = llm_intents["duration"]
+            if llm_intents.get("reasoning"):
+                merged["reasoning"] = llm_intents["reasoning"]
+            if merged:
+                yield {"event": "intents", "data": json.dumps(merged, ensure_ascii=False)}
 
             full_response = ""
 
